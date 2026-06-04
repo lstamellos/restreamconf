@@ -1,0 +1,5 @@
+desc=Restream Configuration
+category=servers
+version=0.1
+os_support=*-linux
+longdesc=Configure an isolated nginx RTMP restreamer with optional stunnel4 RTMPS upstreams for Virtualmin GPL.

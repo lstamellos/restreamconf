@@ -1,0 +1,8 @@
+streams_file=/etc/webmin/restreamconf/streams.conf
+nginx_conf=/etc/nginx/restreamconf/rtmp.conf
+stunnel_conf=/etc/stunnel/restreamconf.conf
+stunnel_service=stunnel4
+nginx_service=nginx
+local_rtmp_host=127.0.0.1
+local_rtmps_base_port=31935
+application=live
