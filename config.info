@@ -1,5 +1,12 @@
 streams_file=Stream database file,0
 nginx_conf=Generated nginx RTMP configuration file,0
+nginx_main_conf=Main nginx configuration file where the RTMP include is installed,0
+manage_nginx_include=Automatically include generated RTMP config in main nginx config (1=yes, 0=no),0
+incoming_host=Public incoming RTMP hostname shown to OBS,0
+listen_ipv6=Also listen for incoming RTMP over IPv6 (1=yes, 0=no),0
+rtmps_delivery=RTMPS delivery method (ffmpeg or stunnel),0
+ffmpeg_path=ffmpeg binary path for RTMPS delivery,0
+ffmpeg_log=ffmpeg RTMPS delivery log file,0
 stunnel_conf=Generated stunnel4 configuration file,0
 stunnel_service=stunnel4 systemd service name,0
 nginx_service=nginx systemd service name,0
