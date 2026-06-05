@@ -135,7 +135,10 @@ sub restreamconf_parse_rtmp_url {
 
 sub restreamconf_stream_local_port {
     my ($index) = @_;
-    return int($config{'local_rtmps_base_port'} || 19350) + int($index);
+    my $base_port = int($config{'local_rtmps_base_port'} || 19350);
+    # Migrate older module installs that still have the previous default saved.
+    $base_port = 19350 if ($base_port == 31935);
+    return $base_port + int($index);
 }
 
 sub restreamconf_enabled_streams {

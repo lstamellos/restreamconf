@@ -29,7 +29,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | `incoming_host` | system hostname | Public hostname shown in the incoming RTMP ingest URL for OBS or other encoders |
 | `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
-| `local_rtmps_base_port` | `19350` | First localhost port used for RTMPS tunnel targets |
+| `local_rtmps_base_port` | `19350` | First localhost port used for RTMPS tunnel targets; legacy saved value `31935` is treated as `19350` |
 | `application` | `live` | nginx RTMP application name |
 
 ## nginx isolation model
