@@ -177,6 +177,25 @@ sub restreamconf_nginx_listen_directives {
     return join('', @directives);
 }
 
+
+sub restreamconf_rtmps_delivery_method {
+    my $method = lc($config{'rtmps_delivery'} || 'ffmpeg');
+    return $method eq 'stunnel' ? 'stunnel' : 'ffmpeg';
+}
+
+sub restreamconf_ffmpeg_path {
+    return $config{'ffmpeg_path'} || '/usr/bin/ffmpeg';
+}
+
+sub restreamconf_nginx_quote_arg {
+    my ($value, $allow_vars) = @_;
+    $value = '' if (!defined($value));
+    $value =~ s/\\/\\\\/g;
+    $value =~ s/"/\\"/g;
+    $value =~ s/\$/\\\$/g if (!$allow_vars);
+    return '"' . $value . '"';
+}
+
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
@@ -203,8 +222,17 @@ sub restreamconf_nginx_conf {
         my $label = $stream->{'name'} || $stream->{'id'} || 'stream';
         $label =~ s/[\r\n#]/ /g;
         if ($parsed->{'protocol'} eq 'rtmps') {
-            my $local_port = restreamconf_stream_local_port($rtmps_index++);
-            $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+            if (restreamconf_rtmps_delivery_method() eq 'stunnel') {
+                my $local_port = restreamconf_stream_local_port($rtmps_index++);
+                $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+            }
+            else {
+                my $source = "rtmp://$local_host:$incoming_port/\$app/\$name";
+                my $ffmpeg = restreamconf_nginx_quote_arg(restreamconf_ffmpeg_path(), 0);
+                my $source_arg = restreamconf_nginx_quote_arg($source, 1);
+                my $output_arg = restreamconf_nginx_quote_arg($url, 0);
+                $conf .= "            exec_push $ffmpeg -nostdin -loglevel error -i $source_arg -c copy -f flv $output_arg; # $label via ffmpeg RTMPS\n";
+            }
         }
         else {
             $conf .= "            push $url; # $label\n";
@@ -219,6 +247,7 @@ sub restreamconf_nginx_conf {
 
 sub restreamconf_stunnel_conf {
     my ($data) = @_;
+    return undef if (restreamconf_rtmps_delivery_method() ne 'stunnel');
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
     my @rtmps_streams = restreamconf_enabled_rtmps_streams($data);
@@ -458,7 +487,7 @@ sub restreamconf_apply_services {
     my $out = `$cmd`;
     push(@messages, "$nginx_service: " . ($? ? "restart failed - $out" : "restarted"));
 
-    if (restreamconf_enabled_rtmps_streams($data)) {
+    if (restreamconf_enabled_rtmps_streams($data) && restreamconf_rtmps_delivery_method() eq 'stunnel') {
         $cmd = "systemctl stop " . quotemeta($stunnel_service) . " 2>&1";
         $out = `$cmd`;
         my @released_ports = restreamconf_release_stunnel_ports($data);
@@ -466,6 +495,12 @@ sub restreamconf_apply_services {
         $out = `$cmd`;
         my $result = $? ? "start failed - $out" : "started";
         $result .= "; released stale listeners on ports " . join(', ', @released_ports) if (@released_ports);
+        push(@messages, "$stunnel_service: $result");
+    }
+    elsif (restreamconf_enabled_rtmps_streams($data)) {
+        my @released_ports = restreamconf_release_stunnel_ports($data);
+        my $result = "skipped (RTMPS delivery uses ffmpeg)";
+        $result .= "; released stale stunnel listeners on ports " . join(', ', @released_ports) if (@released_ports);
         push(@messages, "$stunnel_service: $result");
     }
     else {
