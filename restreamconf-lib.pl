@@ -2,10 +2,12 @@
 
 BEGIN { push(@INC, '..'); };
 use WebminCore;
+use Sys::Hostname qw(hostname);
 
 init_config();
 our $module_config_directory ||= $config_directory;
 our $DEFAULT_INCOMING_PORT = 1935;
+our $DEFAULT_INCOMING_HOST = hostname() || 'localhost';
 
 sub restreamconf_config_path {
     return $config{'streams_file'} || "$module_config_directory/streams.conf";
@@ -13,6 +15,7 @@ sub restreamconf_config_path {
 
 sub restreamconf_default_config {
     return {
+        incoming_host => $config{'incoming_host'} || $DEFAULT_INCOMING_HOST,
         incoming_port => $DEFAULT_INCOMING_PORT,
         streams => [],
     };
@@ -41,7 +44,11 @@ sub restreamconf_read_config {
     while (my $line = <$fh>) {
         chomp($line);
         next if ($line =~ /^\s*#/ || $line =~ /^\s*$/);
-        if ($line =~ /^incoming_port=(\d+)$/) {
+        if ($line =~ /^incoming_host=(.*)$/) {
+            my $host = restreamconf_unescape($1);
+            $data->{'incoming_host'} = $host if ($host ne '');
+        }
+        elsif ($line =~ /^incoming_port=(\d+)$/) {
             $data->{'incoming_port'} = $1;
         }
         elsif ($line =~ /^stream=(.*)$/) {
@@ -69,6 +76,7 @@ sub restreamconf_write_config {
 
     open(my $fh, '>', $path) || &error("Failed to write $path: $!");
     print $fh "# Managed by Webmin/Virtualmin Restream Configuration.\n";
+    print $fh "incoming_host=" . restreamconf_escape($data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST) . "\n";
     print $fh "incoming_port=" . int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT) . "\n";
     foreach my $stream (@{$data->{'streams'} || []}) {
         print $fh join('|',
@@ -87,6 +95,19 @@ sub restreamconf_write_config {
 sub restreamconf_valid_port {
     my ($port) = @_;
     return ($port =~ /^\d+$/ && $port >= 1 && $port <= 65535);
+}
+
+sub restreamconf_valid_host {
+    my ($host) = @_;
+    return ($host =~ /^[A-Za-z0-9_.-]+$/);
+}
+
+sub restreamconf_incoming_endpoint {
+    my ($data) = @_;
+    my $host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
+    my $port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $app = $config{'application'} || 'live';
+    return "rtmp://$host:$port/$app";
 }
 
 sub restreamconf_normalize_stream_url {
@@ -122,17 +143,52 @@ sub restreamconf_enabled_streams {
     return grep { $_->{'enabled'} && $_->{'url'} } @{$data->{'streams'} || []};
 }
 
+
+sub restreamconf_enabled_rtmps_streams {
+    my ($data) = @_;
+    my @streams;
+    foreach my $stream (@{$data->{'streams'} || []}) {
+        next if (!$stream->{'enabled'} || !$stream->{'url'});
+        my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
+        my $parsed = restreamconf_parse_rtmp_url($url);
+        next if (!$parsed || $parsed->{'protocol'} ne 'rtmps');
+        push(@streams, [ $stream, $parsed ]);
+    }
+    return @streams;
+}
+
+sub restreamconf_remove_generated_file {
+    my ($path) = @_;
+    return 0 if (!$path || !-f $path);
+    open(my $fh, '<', $path) || return 0;
+    my $first = <$fh> || '';
+    close($fh);
+    return 0 if ($first !~ /^# Managed by Webmin\/Virtualmin Restream Configuration\./);
+    unlink($path);
+    return 1;
+}
+
+sub restreamconf_nginx_listen_directives {
+    my ($port) = @_;
+    my @directives = ("        listen 0.0.0.0:$port;\n");
+    if (!defined($config{'listen_ipv6'}) || $config{'listen_ipv6'} !~ /^(0|no|false)$/i) {
+        push(@directives, "        listen [::]:$port ipv6only=on;\n");
+    }
+    return join('', @directives);
+}
+
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
                "rtmp {\n" .
                "    server {\n" .
-               "        listen $incoming_port;\n" .
+               $listen_directives .
                "        chunk_size 4096;\n\n" .
                "        application $app {\n" .
                "            live on;\n" .
@@ -164,15 +220,15 @@ sub restreamconf_stunnel_conf {
     my ($data) = @_;
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
+    my @rtmps_streams = restreamconf_enabled_rtmps_streams($data);
+    return undef if (!@rtmps_streams);
+
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
                "foreground = no\n" .
                "pid = /run/stunnel4/restreamconf.pid\n\n";
 
-    foreach my $stream (@{$data->{'streams'} || []}) {
-        next if (!$stream->{'enabled'} || !$stream->{'url'});
-        my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
-        my $parsed = restreamconf_parse_rtmp_url($url);
-        next if (!$parsed || $parsed->{'protocol'} ne 'rtmps');
+    foreach my $entry (@rtmps_streams) {
+        my ($stream, $parsed) = @{$entry};
         my $local_port = restreamconf_stream_local_port($rtmps_index++);
         my $service = $stream->{'id'} || "rtmps_$rtmps_index";
         $service =~ s/[^A-Za-z0-9_-]/_/g;
@@ -180,28 +236,105 @@ sub restreamconf_stunnel_conf {
                  "client = yes\n" .
                  "accept = $local_host:$local_port\n" .
                  "connect = $parsed->{'host'}:$parsed->{'port'}\n" .
+                 "sni = $parsed->{'host'}\n" .
                  "verifyChain = no\n\n";
     }
     return $conf;
 }
 
+
+sub restreamconf_stunnel_config_path {
+    my $legacy_stunnel_path = '/etc/stunnel/restreamconf.conf';
+    my $stunnel_path = $config{'stunnel_conf'} || '/etc/stunnel/conf.d/restreamconf.conf';
+
+    # Older module installs wrote a top-level file under /etc/stunnel.
+    # Ubuntu/Debian stunnel4 also starts every top-level *.conf separately,
+    # so place the default module snippet under conf.d instead.
+    return '/etc/stunnel/conf.d/restreamconf.conf' if ($stunnel_path eq $legacy_stunnel_path);
+    return $stunnel_path;
+}
+
+
+sub restreamconf_nginx_main_conf_path {
+    return $config{'nginx_main_conf'} || '/etc/nginx/nginx.conf';
+}
+
+sub restreamconf_manage_nginx_include {
+    return 1 if (!defined($config{'manage_nginx_include'}) || $config{'manage_nginx_include'} eq '');
+    return ($config{'manage_nginx_include'} !~ /^(0|no|false)$/i);
+}
+
+sub restreamconf_ensure_nginx_include {
+    my ($nginx_path) = @_;
+    return 0 if (!restreamconf_manage_nginx_include());
+
+    my $main_conf = restreamconf_nginx_main_conf_path();
+    return 0 if (!$main_conf || !-f $main_conf || !-r $main_conf || !-w $main_conf);
+
+    open(my $in, '<', $main_conf) || return 0;
+    my @lines = <$in>;
+    close($in);
+
+    my $include_line = "include $nginx_path;";
+    foreach my $line (@lines) {
+        return 0 if ($line =~ /^\s*include\s+\Q$nginx_path\E\s*;\s*$/);
+    }
+
+    my @updated;
+    my $inserted = 0;
+    foreach my $line (@lines) {
+        if (!$inserted && $line =~ /^\s*http\s*\{/) {
+            push(@updated,
+                "# Managed by Webmin/Virtualmin Restream Configuration.\n",
+                "$include_line\n\n");
+            $inserted = 1;
+        }
+        push(@updated, $line);
+    }
+    if (!$inserted) {
+        push(@updated,
+            "\n# Managed by Webmin/Virtualmin Restream Configuration.\n",
+            "$include_line\n");
+    }
+
+    open(my $out, '>', $main_conf) || return 0;
+    print $out @updated;
+    close($out);
+    return 1;
+}
+
 sub restreamconf_write_service_files {
     my ($data) = @_;
     my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
-    my $stunnel_path = $config{'stunnel_conf'} || '/etc/stunnel/restreamconf.conf';
+    my $stunnel_path = restreamconf_stunnel_config_path();
+    my $legacy_stunnel_path = '/etc/stunnel/restreamconf.conf';
 
-    foreach my $path ($nginx_path, $stunnel_path) {
-        my ($dir) = $path =~ /^(.*)\/[^\/]+$/;
-        make_dir($dir, 0755) if ($dir && !-d $dir);
-    }
+    my ($nginx_dir) = $nginx_path =~ /^(.*)\/[^\/]+$/;
+    make_dir($nginx_dir, 0755) if ($nginx_dir && !-d $nginx_dir);
 
     open(my $nginx, '>', $nginx_path) || &error("Failed to write $nginx_path: $!");
     print $nginx restreamconf_nginx_conf($data);
     close($nginx);
+    restreamconf_ensure_nginx_include($nginx_path);
 
-    open(my $stunnel, '>', $stunnel_path) || &error("Failed to write $stunnel_path: $!");
-    print $stunnel restreamconf_stunnel_conf($data);
-    close($stunnel);
+    my $stunnel_conf = restreamconf_stunnel_conf($data);
+    if (defined($stunnel_conf)) {
+        my ($stunnel_dir) = $stunnel_path =~ /^(.*)\/[^\/]+$/;
+        make_dir($stunnel_dir, 0755) if ($stunnel_dir && !-d $stunnel_dir);
+        open(my $stunnel, '>', $stunnel_path) || &error("Failed to write $stunnel_path: $!");
+        print $stunnel $stunnel_conf;
+        close($stunnel);
+
+        if ($stunnel_path ne $legacy_stunnel_path) {
+            restreamconf_remove_generated_file($legacy_stunnel_path);
+        }
+    }
+    else {
+        restreamconf_remove_generated_file($stunnel_path);
+        if ($stunnel_path ne $legacy_stunnel_path) {
+            restreamconf_remove_generated_file($legacy_stunnel_path);
+        }
+    }
 }
 
 sub restreamconf_restart_command {
@@ -210,12 +343,23 @@ sub restreamconf_restart_command {
 }
 
 sub restreamconf_apply_services {
-    restreamconf_write_service_files(@_);
+    my ($data) = @_;
+    restreamconf_write_service_files($data);
     my @messages;
-    foreach my $service ($config{'nginx_service'} || 'nginx', $config{'stunnel_service'} || 'stunnel4') {
-        my $cmd = "systemctl restart " . quotemeta($service) . " 2>&1";
-        my $out = `$cmd`;
-        push(@messages, "$service: " . ($? ? "restart failed - $out" : "restarted"));
+    my $nginx_service = $config{'nginx_service'} || 'nginx';
+    my $stunnel_service = $config{'stunnel_service'} || 'stunnel4';
+
+    my $cmd = "systemctl restart " . quotemeta($nginx_service) . " 2>&1";
+    my $out = `$cmd`;
+    push(@messages, "$nginx_service: " . ($? ? "restart failed - $out" : "restarted"));
+
+    if (restreamconf_enabled_rtmps_streams($data)) {
+        $cmd = "systemctl restart " . quotemeta($stunnel_service) . " 2>&1";
+        $out = `$cmd`;
+        push(@messages, "$stunnel_service: " . ($? ? "restart failed - $out" : "restarted"));
+    }
+    else {
+        push(@messages, "$stunnel_service: skipped (no enabled RTMPS destinations)");
     }
     return @messages;
 }
@@ -229,9 +373,9 @@ sub restreamconf_service_active {
 
 sub restreamconf_render_status_table {
     my ($data) = @_;
-    my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $incoming_endpoint = restreamconf_incoming_endpoint($data);
     my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
-    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'listening on configured port', &html_escape("rtmp://<server>:$incoming_port/") ]);
+    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'public ingest endpoint', &html_escape($incoming_endpoint) ]);
     foreach my $stream (@{$data->{'streams'} || []}) {
         my $state = $stream->{'enabled'} ? 'active' : 'inactive';
         my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');

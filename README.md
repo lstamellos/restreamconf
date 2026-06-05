@@ -5,7 +5,7 @@ A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and mult
 ## What the module does
 
 - Provides a Virtualmin/Webmin configuration page for:
-  - one incoming RTMP port, configured independently from outgoing destinations;
+  - one public incoming RTMP hostname and one listening port, configured independently from outgoing destinations;
   - multiple outgoing RTMP or RTMPS stream entries;
   - per-entry enable/disable state;
   - stream URLs with explicit ports when needed;
@@ -24,19 +24,29 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | --- | --- | --- |
 | `streams_file` | `/etc/webmin/restreamconf/streams.conf` | Module stream database |
 | `nginx_conf` | `/etc/nginx/restreamconf/rtmp.conf` | Generated nginx RTMP config |
-| `stunnel_conf` | `/etc/stunnel/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
+| `nginx_main_conf` | `/etc/nginx/nginx.conf` | Main nginx config where the module installs the RTMP include |
+| `manage_nginx_include` | `1` | Automatically include the generated RTMP config from the main nginx config |
+| `incoming_host` | system hostname | Public hostname shown in the incoming RTMP ingest URL for OBS or other encoders |
+| `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
+| `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `31935` | First localhost port used for RTMPS tunnel targets |
 | `application` | `live` | nginx RTMP application name |
 
 ## nginx isolation model
 
-The module writes only its own nginx file and does not modify existing nginx sites or global configuration. To activate the generated RTMP block, include the generated file from the top level of `nginx.conf`, not inside the `http {}` block:
+The module writes its RTMP server block to its own nginx file and, by default, installs a top-level include for that file in `nginx.conf` before the `http {}` block. The include must be top-level because the nginx RTMP module does not run from inside the HTTP context:
 
 ```nginx
 include /etc/nginx/restreamconf/rtmp.conf;
+
+http {
+    ...
+}
 ```
 
-This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming while still ensuring nginx actually loads the RTMP listener. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+
+The generated RTMP server listens on the configured port on IPv4 (`0.0.0.0`) and, by default, IPv6 (`[::]`), while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address, and the IPv6 listener prevents OBS from getting `ECONNREFUSED` when the hostname resolves to an AAAA record first.
 
 ## RTMPS handling
 
@@ -44,9 +54,11 @@ nginx RTMP pushes plain RTMP. For RTMPS destinations, this module creates one lo
 
 1. nginx pushes to `rtmp://127.0.0.1:<local-port>/<remote-path>`;
 2. stunnel4 accepts that local connection;
-3. stunnel4 connects to the remote RTMPS host and port using TLS.
+3. stunnel4 connects to the remote RTMPS host and port using TLS, sending the remote host as TLS SNI so providers such as Facebook route the ingest connection correctly.
 
-Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled.
+Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
+
+On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header.
 
 ## Installation
 
@@ -62,7 +74,7 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 
 The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The monitoring output lists:
 
-- the incoming RTMP ingest endpoint and configured port;
+- the incoming RTMP ingest endpoint with the configured hostname, port, and application path;
 - each active outgoing stream as active;
 - each disabled outgoing stream as inactive;
 - nginx and stunnel4 service states when available through `systemctl`.
