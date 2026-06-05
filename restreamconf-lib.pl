@@ -168,18 +168,28 @@ sub restreamconf_remove_generated_file {
     return 1;
 }
 
+sub restreamconf_nginx_listen_directives {
+    my ($port) = @_;
+    my @directives = ("        listen 0.0.0.0:$port;\n");
+    if (!defined($config{'listen_ipv6'}) || $config{'listen_ipv6'} !~ /^(0|no|false)$/i) {
+        push(@directives, "        listen [::]:$port ipv6only=on;\n");
+    }
+    return join('', @directives);
+}
+
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
     my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
                "rtmp {\n" .
                "    server {\n" .
-               "        listen $incoming_host:$incoming_port;\n" .
+               $listen_directives .
                "        chunk_size 4096;\n\n" .
                "        application $app {\n" .
                "            live on;\n" .

@@ -3,6 +3,7 @@ nginx_conf=/etc/nginx/restreamconf/rtmp.conf
 nginx_main_conf=/etc/nginx/nginx.conf
 manage_nginx_include=1
 incoming_host=
+listen_ipv6=1
 stunnel_conf=/etc/stunnel/conf.d/restreamconf.conf
 stunnel_service=stunnel4
 nginx_service=nginx
