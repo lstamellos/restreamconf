@@ -56,7 +56,7 @@ nginx RTMP pushes plain RTMP. For RTMPS destinations, this module creates one lo
 2. stunnel4 accepts that local connection;
 3. stunnel4 connects to the remote RTMPS host and port using TLS, sending the remote host as TLS SNI so providers such as Facebook route the ingest connection correctly.
 
-Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
+Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled. When applying enabled RTMPS outputs, the module stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
 
 On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header.
 

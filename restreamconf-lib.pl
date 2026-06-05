@@ -338,6 +338,110 @@ sub restreamconf_write_service_files {
     }
 }
 
+
+sub restreamconf_enabled_rtmps_local_ports {
+    my ($data) = @_;
+    my @ports;
+    my $rtmps_index = 0;
+    foreach my $entry (restreamconf_enabled_rtmps_streams($data)) {
+        push(@ports, restreamconf_stream_local_port($rtmps_index++));
+    }
+    return @ports;
+}
+
+sub restreamconf_listening_socket_inodes_for_port {
+    my ($port) = @_;
+    my %inodes;
+    my $hex_port = uc(sprintf('%04X', $port));
+
+    foreach my $path ('/proc/net/tcp', '/proc/net/tcp6') {
+        next if (!-r $path);
+        open(my $fh, '<', $path) || next;
+        while (my $line = <$fh>) {
+            next if ($line !~ /^\s*\d+:/);
+            my @fields = split(' ', $line);
+            next if (@fields < 10);
+            my $local = $fields[1];
+            my $state = $fields[3];
+            my $inode = $fields[9];
+            next if ($state ne '0A' || $local !~ /:$hex_port$/ || $inode !~ /^\d+$/ || $inode == 0);
+            $inodes{$inode} = 1;
+        }
+        close($fh);
+    }
+
+    return keys(%inodes);
+}
+
+sub restreamconf_pids_for_socket_inodes {
+    my (@inodes) = @_;
+    my %wanted = map { $_ => 1 } @inodes;
+    my %pids;
+    return () if (!%wanted);
+
+    opendir(my $proc, '/proc') || return ();
+    while (my $pid = readdir($proc)) {
+        next if ($pid !~ /^\d+$/);
+        my $fd_dir = "/proc/$pid/fd";
+        opendir(my $fds, $fd_dir) || next;
+        while (my $fd = readdir($fds)) {
+            next if ($fd =~ /^\.\.?$/);
+            my $target = readlink("$fd_dir/$fd");
+            if (defined($target) && $target =~ /^socket:\[(\d+)\]$/ && $wanted{$1}) {
+                $pids{$pid} = 1;
+                last;
+            }
+        }
+        closedir($fds);
+    }
+    closedir($proc);
+    return keys(%pids);
+}
+
+sub restreamconf_listening_pids_for_port {
+    my ($port) = @_;
+    return () if (!restreamconf_valid_port($port));
+
+    my %pids;
+    my $ss = `ss -H -ltnp 'sport = :$port' 2>/dev/null`;
+    while ($ss =~ /pid=(\d+)/g) {
+        $pids{$1} = 1;
+    }
+
+    if (!%pids) {
+        my $lsof = `lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null`;
+        foreach my $line (split(/\n/, $lsof)) {
+            $pids{$line} = 1 if ($line =~ /^\d+$/);
+        }
+    }
+
+    if (!%pids) {
+        foreach my $pid (restreamconf_pids_for_socket_inodes(restreamconf_listening_socket_inodes_for_port($port))) {
+            $pids{$pid} = 1;
+        }
+    }
+
+    return keys(%pids);
+}
+
+sub restreamconf_release_stunnel_ports {
+    my ($data) = @_;
+    my %killed;
+    foreach my $port (restreamconf_enabled_rtmps_local_ports($data)) {
+        my @pids = restreamconf_listening_pids_for_port($port);
+        next if (!@pids);
+        kill('TERM', @pids);
+        sleep(1);
+        foreach my $pid (@pids) {
+            if (kill(0, $pid)) {
+                kill('KILL', $pid);
+            }
+            $killed{$port} = 1;
+        }
+    }
+    return sort { $a <=> $b } keys(%killed);
+}
+
 sub restreamconf_restart_command {
     my ($service) = @_;
     return "systemctl restart " . quotemeta($service);
@@ -355,9 +459,14 @@ sub restreamconf_apply_services {
     push(@messages, "$nginx_service: " . ($? ? "restart failed - $out" : "restarted"));
 
     if (restreamconf_enabled_rtmps_streams($data)) {
-        $cmd = "systemctl restart " . quotemeta($stunnel_service) . " 2>&1";
+        $cmd = "systemctl stop " . quotemeta($stunnel_service) . " 2>&1";
         $out = `$cmd`;
-        push(@messages, "$stunnel_service: " . ($? ? "restart failed - $out" : "restarted"));
+        my @released_ports = restreamconf_release_stunnel_ports($data);
+        $cmd = "systemctl start " . quotemeta($stunnel_service) . " 2>&1";
+        $out = `$cmd`;
+        my $result = $? ? "start failed - $out" : "started";
+        $result .= "; released stale listeners on ports " . join(', ', @released_ports) if (@released_ports);
+        push(@messages, "$stunnel_service: $result");
     }
     else {
         push(@messages, "$stunnel_service: skipped (no enabled RTMPS destinations)");
