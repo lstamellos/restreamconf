@@ -13,12 +13,24 @@ sub restreamconf_config_path {
     return $config{'streams_file'} || "$module_config_directory/streams.conf";
 }
 
+sub restreamconf_default_group_id {
+    return 'default';
+}
+
 sub restreamconf_default_config {
     return {
         incoming_host => $config{'incoming_host'} || $DEFAULT_INCOMING_HOST,
         incoming_port => $DEFAULT_INCOMING_PORT,
+        groups => [ { id => restreamconf_default_group_id(), enabled => 1, name => 'Default group' } ],
         streams => [],
     };
+}
+
+sub restreamconf_new_id {
+    my ($prefix, $index) = @_;
+    $prefix ||= 'item';
+    $index = 0 if (!defined($index));
+    return $prefix . '_' . time() . '_' . int($index);
 }
 
 sub restreamconf_escape {
@@ -35,12 +47,72 @@ sub restreamconf_unescape {
     return $value;
 }
 
+sub restreamconf_normalize_groups {
+    my ($data) = @_;
+    $data->{'groups'} ||= [];
+    $data->{'streams'} ||= [];
+
+    my %seen;
+    my @groups;
+    foreach my $group (@{$data->{'groups'}}) {
+        my $id = $group->{'id'} || restreamconf_default_group_id();
+        next if ($seen{$id});
+        push(@groups, {
+            id => $id,
+            enabled => $group->{'enabled'} ? 1 : 0,
+            name => $group->{'name'} || 'Default group',
+        });
+        $seen{$id} = 1;
+    }
+
+    if (!@groups) {
+        push(@groups, { id => restreamconf_default_group_id(), enabled => 1, name => 'Default group' });
+        $seen{restreamconf_default_group_id()} = 1;
+    }
+
+    my $fallback_group = $groups[0]->{'id'};
+    foreach my $stream (@{$data->{'streams'}}) {
+        my $group_id = $stream->{'group_id'} || $fallback_group;
+        if (!$seen{$group_id}) {
+            push(@groups, { id => $group_id, enabled => 1, name => 'Group' });
+            $seen{$group_id} = 1;
+        }
+        $stream->{'group_id'} = $group_id;
+    }
+
+    $data->{'groups'} = \@groups;
+    return $data;
+}
+
+sub restreamconf_groups_by_id {
+    my ($data) = @_;
+    my %groups;
+    foreach my $group (@{$data->{'groups'} || []}) {
+        $groups{$group->{'id'}} = $group if ($group->{'id'});
+    }
+    return %groups;
+}
+
+sub restreamconf_stream_group {
+    my ($data, $stream) = @_;
+    my %groups = restreamconf_groups_by_id($data);
+    return $groups{$stream->{'group_id'}} || ($data->{'groups'} || [])->[0] || { enabled => 1, name => 'Default group' };
+}
+
+sub restreamconf_stream_active {
+    my ($data, $stream) = @_;
+    my $group = restreamconf_stream_group($data, $stream);
+    return ($group->{'enabled'} && $stream->{'enabled'} && $stream->{'url'}) ? 1 : 0;
+}
+
+
 sub restreamconf_read_config {
     my $path = restreamconf_config_path();
     my $data = restreamconf_default_config();
-    return $data if (!-r $path);
+    $data->{'groups'} = [];
+    return restreamconf_normalize_groups($data) if (!-r $path);
 
-    open(my $fh, '<', $path) || return $data;
+    open(my $fh, '<', $path) || return restreamconf_normalize_groups($data);
     while (my $line = <$fh>) {
         chomp($line);
         next if ($line =~ /^\s*#/ || $line =~ /^\s*$/);
@@ -50,6 +122,15 @@ sub restreamconf_read_config {
         }
         elsif ($line =~ /^incoming_port=(\d+)$/) {
             $data->{'incoming_port'} = $1;
+        }
+        elsif ($line =~ /^group=(.*)$/) {
+            my @parts = split(/\|/, $1, -1);
+            next if (@parts < 3);
+            push(@{$data->{'groups'}}, {
+                id => restreamconf_unescape($parts[0]),
+                enabled => $parts[1] ? 1 : 0,
+                name => restreamconf_unescape($parts[2]),
+            });
         }
         elsif ($line =~ /^stream=(.*)$/) {
             my @parts = split(/\|/, $1, -1);
@@ -61,11 +142,12 @@ sub restreamconf_read_config {
                 protocol => lc(restreamconf_unescape($parts[3]) || 'rtmp'),
                 url => restreamconf_unescape($parts[4]),
                 key => restreamconf_unescape($parts[5]),
+                group_id => restreamconf_unescape($parts[6] || ''),
             });
         }
     }
     close($fh);
-    return $data;
+    return restreamconf_normalize_groups($data);
 }
 
 sub restreamconf_write_config {
@@ -78,6 +160,14 @@ sub restreamconf_write_config {
     print $fh "# Managed by Webmin/Virtualmin Restream Configuration.\n";
     print $fh "incoming_host=" . restreamconf_escape($data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST) . "\n";
     print $fh "incoming_port=" . int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT) . "\n";
+    $data = restreamconf_normalize_groups($data);
+    foreach my $group (@{$data->{'groups'} || []}) {
+        print $fh join('|',
+            'group=' . restreamconf_escape($group->{'id'}),
+            $group->{'enabled'} ? 1 : 0,
+            restreamconf_escape($group->{'name'}),
+        ) . "\n";
+    }
     foreach my $stream (@{$data->{'streams'} || []}) {
         print $fh join('|',
             'stream=' . restreamconf_escape($stream->{'id'}),
@@ -86,6 +176,7 @@ sub restreamconf_write_config {
             restreamconf_escape($stream->{'protocol'} || 'rtmp'),
             restreamconf_escape($stream->{'url'}),
             restreamconf_escape($stream->{'key'}),
+            restreamconf_escape($stream->{'group_id'} || restreamconf_default_group_id()),
         ) . "\n";
     }
     close($fh);
@@ -170,7 +261,7 @@ sub restreamconf_enabled_rtmps_streams {
     my ($data) = @_;
     my @streams;
     foreach my $stream (@{$data->{'streams'} || []}) {
-        next if (!$stream->{'enabled'} || !$stream->{'url'});
+        next if (!restreamconf_stream_active($data, $stream));
         my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
         my $parsed = restreamconf_parse_rtmp_url($url);
         next if (!$parsed || $parsed->{'protocol'} ne 'rtmps');
@@ -217,11 +308,12 @@ sub restreamconf_nginx_conf {
                "            record off;\n";
 
     foreach my $stream (@{$data->{'streams'} || []}) {
-        next if (!$stream->{'enabled'} || !$stream->{'url'});
+        next if (!restreamconf_stream_active($data, $stream));
         my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
         my $parsed = restreamconf_parse_rtmp_url($url);
         next if (!$parsed);
-        my $label = $stream->{'name'} || $stream->{'id'} || 'stream';
+        my $group = restreamconf_stream_group($data, $stream);
+        my $label = ($group->{'name'} ? $group->{'name'} . ' / ' : '') . ($stream->{'name'} || $stream->{'id'} || 'stream');
         $label =~ s/[\r\n#]/ /g;
         if ($parsed->{'protocol'} eq 'rtmps') {
             my $local_port = restreamconf_stream_local_port($rtmps_index++);
@@ -582,10 +674,15 @@ sub restreamconf_render_status_table {
     my $incoming_endpoint = restreamconf_incoming_endpoint($data);
     my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
     $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'public ingest endpoint', &html_escape($incoming_endpoint) ]);
-    foreach my $stream (@{$data->{'streams'} || []}) {
-        my $state = $stream->{'enabled'} ? 'active' : 'inactive';
-        my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
-        $html .= &ui_columns_row([ 'Outgoing', &html_escape($stream->{'name'} || $stream->{'id'}), $state, &html_escape($endpoint || '-') ]);
+    foreach my $group (@{$data->{'groups'} || []}) {
+        my $group_state = $group->{'enabled'} ? 'enabled' : 'disabled';
+        $html .= &ui_columns_row([ 'Outgoing group', &html_escape($group->{'name'} || $group->{'id'}), $group_state, '-' ]);
+        foreach my $stream (@{$data->{'streams'} || []}) {
+            next if (($stream->{'group_id'} || restreamconf_default_group_id()) ne $group->{'id'});
+            my $state = restreamconf_stream_active($data, $stream) ? 'active' : ($stream->{'enabled'} ? 'inactive (group disabled)' : 'inactive');
+            my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
+            $html .= &ui_columns_row([ 'Outgoing', '&nbsp;&nbsp;' . &html_escape($stream->{'name'} || $stream->{'id'}), $state, &html_escape($endpoint || '-') ]);
+        }
     }
     $html .= &ui_columns_end();
     return $html;

@@ -16,9 +16,34 @@ my $incoming_port = $in{'incoming_port'};
 my $data = {
     incoming_host => $incoming_host,
     incoming_port => int($incoming_port),
+    groups => [],
     streams => [],
 };
 
+my %group_ids;
+my $group_rows = int($in{'group_rows'} || 0);
+for (my $i = 0; $i < $group_rows; $i++) {
+    my $name = $in{"group_name_$i"} || '';
+    $name =~ s/^\s+|\s+$//g;
+    next if ($name eq '');
+
+    my $id = $in{"group_id_$i"} || restreamconf_new_id('group', $i);
+    $id =~ s/[^A-Za-z0-9_.-]/_/g;
+    next if ($group_ids{$id});
+    push(@{$data->{'groups'}}, {
+        id => $id,
+        enabled => $in{"group_enabled_$i"} ? 1 : 0,
+        name => $name,
+    });
+    $group_ids{$id} = 1;
+}
+
+if (!@{$data->{'groups'}}) {
+    push(@{$data->{'groups'}}, { id => restreamconf_default_group_id(), enabled => 1, name => 'Default group' });
+    $group_ids{restreamconf_default_group_id()} = 1;
+}
+
+my $fallback_group = $data->{'groups'}->[0]->{'id'};
 my $rows = int($in{'rows'} || 0);
 for (my $i = 0; $i < $rows; $i++) {
     my $name = $in{"name_$i"} || '';
@@ -40,13 +65,18 @@ for (my $i = 0; $i < $rows; $i++) {
     &error("Stream URL for row " . ($i + 1) . " must include a valid RTMP or RTMPS host") if (!$parsed);
     &error("Stream URL port for row " . ($i + 1) . " is outside the valid range") if (!restreamconf_valid_port($parsed->{'port'}));
 
+    my $group_id = $in{"group_$i"} || $fallback_group;
+    $group_id =~ s/[^A-Za-z0-9_.-]/_/g;
+    $group_id = $fallback_group if (!$group_ids{$group_id});
+
     push(@{$data->{'streams'}}, {
-        id => $in{"id_$i"} || time() . "_$i",
+        id => $in{"id_$i"} || restreamconf_new_id('stream', $i),
         enabled => $in{"enabled_$i"} ? 1 : 0,
         name => $name || "Stream " . ($i + 1),
         protocol => $protocol,
         url => $url,
         key => $key,
+        group_id => $group_id,
     });
 }
 

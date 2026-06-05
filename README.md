@@ -7,7 +7,8 @@ A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and mult
 - Provides a Virtualmin/Webmin configuration page for:
   - one public incoming RTMP hostname and one listening port, configured independently from outgoing destinations;
   - multiple outgoing RTMP or RTMPS stream entries;
-  - per-entry enable/disable state;
+  - outgoing stream groups that can be enabled or disabled together;
+  - per-entry enable/disable state within each group;
   - stream URLs with explicit ports when needed;
   - separate stream keys, which are appended to the URL only when provided.
 - Generates a module-owned nginx RTMP configuration file without editing existing nginx configuration files.
@@ -52,7 +53,7 @@ The generated RTMP server listens on the configured port on IPv4 (`0.0.0.0`) and
 
 nginx RTMP pushes plain RTMP directly. For RTMPS destinations, this module creates one local stunnel4 client listener per enabled RTMPS output. nginx pushes the incoming stream to `rtmp://127.0.0.1:<local-port>/<remote-path>`, preserving the remote RTMPS path and stream key. stunnel4 accepts that local RTMP connection and connects to the remote RTMPS host using TLS with SNI.
 
-When applying enabled RTMPS outputs, the module stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes. Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
+When applying enabled RTMPS outputs, the module stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes. Inactive RTMPS outputs, including outputs inside disabled groups, are saved but do not receive nginx push directives or stunnel4 service entries until both their group and their individual row are re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
 
 On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header.
 
@@ -71,6 +72,7 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The dashboard diagnostics section checks whether nginx loads the generated RTMP config, whether the incoming port has listener PIDs, what stunnel4 RTMPS forwarding action is generated, and which local tunnel ports are used. The monitoring output lists:
 
 - the incoming RTMP ingest endpoint with the configured hostname, port, and application path;
+- each outgoing stream group as enabled or disabled;
 - each active outgoing stream as active;
-- each disabled outgoing stream as inactive;
+- each individually disabled or group-disabled outgoing stream as inactive;
 - nginx and stunnel4 service states when available through `systemctl`.

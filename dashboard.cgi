@@ -15,7 +15,7 @@ print &ui_columns_end();
 
 print '<h3>Streams</h3>';
 print restreamconf_render_status_table($data);
-print '<p>Inactive outgoing configurations are retained and shown here as inactive so they can be re-enabled later.</p>';
+print '<p>Inactive outgoing configurations, including streams in disabled groups, are retained and shown here as inactive so they can be re-enabled later.</p>';
 print restreamconf_render_diagnostics($data);
 
 &ui_print_footer('index.cgi', 'Restream Configuration');
