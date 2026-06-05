@@ -29,8 +29,8 @@ foreach my $stream (@streams) {
 sub restreamconf_icon_button {
     my ($class, $label, $icon, $title, $attrs) = @_;
     $attrs ||= '';
-    return '<button type="button" class="rc-icon-button ' . &html_escape($class) . '" title="' . &html_escape($title) . '" aria-label="' . &html_escape($title) . '" ' . $attrs . '>' .
-        '<span class="rc-icon" aria-hidden="true">' . $icon . '</span><span class="rc-icon-label">' . &html_escape($label) . '</span></button>';
+    my $value = $icon . ' ' . $label;
+    return '<input type="button" class="' . &html_escape($class) . '" value="' . &html_escape($value) . '" title="' . &html_escape($title) . '" aria-label="' . &html_escape($title) . '" ' . $attrs . '>';
 }
 
 sub restreamconf_stream_row_html {
@@ -55,7 +55,6 @@ print <<'STYLE';
 .rc-shell { max-width: 1220px; }
 .rc-intro { line-height: 1.5; max-width: 920px; }
 .rc-tabs { display: flex; flex-wrap: wrap; gap: .25em; margin: 1em 0; }
-.rc-tab { cursor: pointer; font: inherit; padding: .45em .8em; }
 .rc-tab[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
 .rc-tab-panel { display: none; }
 .rc-tab-panel.rc-active { display: block; }
@@ -74,10 +73,8 @@ print <<'STYLE';
 .rc-stream-table { width: 100%; }
 .rc-stream-table th, .rc-stream-table td { padding: .35em; vertical-align: middle; }
 .rc-stream-table input[type="text"] { max-width: 100%; }
-.rc-icon-button { cursor: pointer; font: inherit; line-height: 1.2; padding: .25em .5em; }
-.rc-icon { margin-right: .25em; }
 .rc-monitor-link { font-weight: bold; }
-@media (max-width: 760px) { .rc-icon-label { display: none; } .rc-stream-table { display: block; overflow-x: auto; } }
+@media (max-width: 760px) { .rc-stream-table { display: block; overflow-x: auto; } }
 </style>
 STYLE
 
@@ -86,9 +83,9 @@ print '<div class="rc-shell">';
 print '<p class="rc-intro">Use the tabs below to move between incoming stream settings, destination groups, and monitoring. Groups use accordions so you can focus on one set of outgoing configurations at a time.</p>';
 
 print '<div class="rc-tabs" role="tablist" aria-label="Restream configuration sections">';
-print '<button type="button" class="rc-tab" role="tab" aria-selected="true" aria-controls="rc-panel-incoming" id="rc-tab-incoming" data-tab-target="rc-panel-incoming">📥 Incoming</button>';
-print '<button type="button" class="rc-tab" role="tab" aria-selected="false" aria-controls="rc-panel-destinations" id="rc-tab-destinations" data-tab-target="rc-panel-destinations">📡 Destinations</button>';
-print '<button type="button" class="rc-tab" role="tab" aria-selected="false" aria-controls="rc-panel-monitoring" id="rc-tab-monitoring" data-tab-target="rc-panel-monitoring">📊 Monitoring</button>';
+print '<input type="button" class="rc-tab" role="tab" aria-selected="true" aria-controls="rc-panel-incoming" id="rc-tab-incoming" data-tab-target="rc-panel-incoming" value="📥 Incoming">';
+print '<input type="button" class="rc-tab" role="tab" aria-selected="false" aria-controls="rc-panel-destinations" id="rc-tab-destinations" data-tab-target="rc-panel-destinations" value="📡 Destinations">';
+print '<input type="button" class="rc-tab" role="tab" aria-selected="false" aria-controls="rc-panel-monitoring" id="rc-tab-monitoring" data-tab-target="rc-panel-monitoring" value="📊 Monitoring">';
 print '</div>';
 
 print '<section class="rc-tab-panel rc-active" role="tabpanel" id="rc-panel-incoming" aria-labelledby="rc-tab-incoming">';
@@ -189,7 +186,7 @@ print <<'SCRIPT';
       '<td><select name="protocol_' + rowIndex + '"><option value="rtmp" selected>RTMP</option><option value="rtmps">RTMPS</option></select></td>' +
       '<td><input type="text" name="url_' + rowIndex + '" size="45" value=""></td>' +
       '<td><input type="text" name="key_' + rowIndex + '" size="24" value=""></td>' +
-      '<td class="rc-row-tools"><button type="button" class="rc-icon-button rc-remove-stream" title="Remove this configuration" aria-label="Remove this configuration"><span class="rc-icon" aria-hidden="true">🗑️</span><span class="rc-icon-label">Remove</span></button></td>' +
+      '<td class="rc-row-tools"><input type="button" class="rc-remove-stream" value="🗑️ Remove" title="Remove this configuration" aria-label="Remove this configuration"></td>' +
       '</tr>';
   }
   function addStream(group) {
@@ -212,7 +209,7 @@ print <<'SCRIPT';
     var groupId = 'group_' + Date.now() + '_' + groupIndex;
     var html = '<details class="ui_table rc-group" data-group-index="' + groupIndex + '" data-group-id="' + esc(groupId) + '" open>' +
       '<summary class="rc-group-summary"><span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">New group ' + (groupIndex + 1) + '</span><span class="rc-badge">Enabled</span><span class="rc-stream-count">0 streams</span></span>' +
-      '<span class="rc-group-tools"><button type="button" class="rc-icon-button rc-edit-group" title="Edit this group" aria-label="Edit this group"><span class="rc-icon" aria-hidden="true">✏️</span><span class="rc-icon-label">Edit</span></button><button type="button" class="rc-icon-button rc-add-stream" title="Add a stream configuration to this group" aria-label="Add a stream configuration to this group"><span class="rc-icon" aria-hidden="true">➕</span><span class="rc-icon-label">Add config</span></button><button type="button" class="rc-icon-button rc-remove-group" title="Remove this group" aria-label="Remove this group"><span class="rc-icon" aria-hidden="true">🗑️</span><span class="rc-icon-label">Remove</span></button></span></summary>' +
+      '<span class="rc-group-tools"><input type="button" class="rc-edit-group" value="✏️ Edit" title="Edit this group" aria-label="Edit this group"><input type="button" class="rc-add-stream" value="➕ Add config" title="Add a stream configuration to this group" aria-label="Add a stream configuration to this group"><input type="button" class="rc-remove-group" value="🗑️ Remove" title="Remove this group" aria-label="Remove this group"></span></summary>' +
       '<div class="rc-group-body"><input type="hidden" name="group_id_' + groupIndex + '" value="' + esc(groupId) + '"><div class="rc-group-fields"><label><b>Enabled</b> <input type="checkbox" name="group_enabled_' + groupIndex + '" value="1" checked></label><label><b>Group name</b> <input type="text" name="group_name_' + groupIndex + '" size="30" value=""></label></div>' +
       '<table class="ui_table rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody></tbody></table></div></details>';
     qs('#rc-groups').insertAdjacentHTML('beforeend', html);
