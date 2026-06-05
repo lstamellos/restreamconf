@@ -7,8 +7,8 @@ require './restreamconf-lib.pl';
 
 my $incoming_host = $in{'incoming_host'} || '';
 $incoming_host =~ s/^\s+|\s+$//g;
-&error('Incoming stream hostname is required') if ($incoming_host eq '');
-&error('Incoming stream hostname contains characters that are unsafe for nginx configuration') if (!restreamconf_valid_host($incoming_host));
+&error('Public incoming stream hostname is required') if ($incoming_host eq '');
+&error('Public incoming stream hostname contains unsupported characters') if (!restreamconf_valid_host($incoming_host));
 
 my $incoming_port = $in{'incoming_port'};
 &error('Incoming stream port must be between 1 and 65535') if (!restreamconf_valid_port($incoming_port));

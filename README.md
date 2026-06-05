@@ -5,7 +5,7 @@ A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and mult
 ## What the module does
 
 - Provides a Virtualmin/Webmin configuration page for:
-  - one incoming RTMP hostname and port, configured independently from outgoing destinations;
+  - one public incoming RTMP hostname and one listening port, configured independently from outgoing destinations;
   - multiple outgoing RTMP or RTMPS stream entries;
   - per-entry enable/disable state;
   - stream URLs with explicit ports when needed;
@@ -24,7 +24,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | --- | --- | --- |
 | `streams_file` | `/etc/webmin/restreamconf/streams.conf` | Module stream database |
 | `nginx_conf` | `/etc/nginx/restreamconf/rtmp.conf` | Generated nginx RTMP config |
-| `incoming_host` | system hostname | Hostname nginx listens on and monitoring shows for the incoming RTMP ingest URL |
+| `incoming_host` | system hostname | Public hostname shown in the incoming RTMP ingest URL for OBS or other encoders |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `31935` | First localhost port used for RTMPS tunnel targets |
 | `application` | `live` | nginx RTMP application name |
@@ -38,6 +38,8 @@ include /etc/nginx/restreamconf/rtmp.conf;
 ```
 
 This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+
+The generated RTMP server listens on the configured port on all interfaces, while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address.
 
 ## RTMPS handling
 

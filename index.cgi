@@ -10,7 +10,7 @@ my $rows = @streams + 3;
 
 print &ui_form_start('save.cgi', 'post');
 print &ui_table_start('Incoming stream', undef, 2);
-print &ui_table_row('Incoming RTMP hostname', &ui_textbox('incoming_host', $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST, 32));
+print &ui_table_row('Public RTMP hostname', &ui_textbox('incoming_host', $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST, 32));
 print &ui_table_row('Incoming RTMP port', &ui_textbox('incoming_port', $data->{'incoming_port'} || 1935, 8));
 print &ui_table_row('Application name', '<code>' . ($config{'application'} || 'live') . '</code>');
 print &ui_table_end();
