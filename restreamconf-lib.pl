@@ -188,6 +188,7 @@ sub restreamconf_rtmps_delivery_method {
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
+    my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
@@ -210,8 +211,19 @@ sub restreamconf_nginx_conf {
         my $label = $stream->{'name'} || $stream->{'id'} || 'stream';
         $label =~ s/[\r\n#]/ /g;
         if ($parsed->{'protocol'} eq 'rtmps') {
-            my $local_port = restreamconf_stream_local_port($rtmps_index++);
-            $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+            if (restreamconf_rtmps_delivery_method() eq 'stunnel') {
+                my $local_port = restreamconf_stream_local_port($rtmps_index++);
+                $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+            }
+            else {
+                my $source = "rtmp://$local_host:$incoming_port/\$app";
+                my $ffmpeg = restreamconf_nginx_quote_arg(restreamconf_ffmpeg_path(), 0);
+                my $source_arg = restreamconf_nginx_quote_arg($source, 1);
+                my $output_arg = restreamconf_nginx_quote_arg($url, 0);
+                my $log_path = restreamconf_ffmpeg_log_path();
+                $log_path =~ s/[\r\n;]//g;
+                $conf .= "            exec $ffmpeg -nostdin -loglevel warning -i $source_arg -c copy -f flv $output_arg 2>>$log_path; # $label via ffmpeg RTMPS\n";
+            }
         }
         else {
             $conf .= "            push $url; # $label\n";
@@ -226,6 +238,7 @@ sub restreamconf_nginx_conf {
 
 sub restreamconf_stunnel_conf {
     my ($data) = @_;
+    return undef if (restreamconf_rtmps_delivery_method() ne 'stunnel');
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
     my @rtmps_streams = restreamconf_enabled_rtmps_streams($data);
