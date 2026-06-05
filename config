@@ -8,5 +8,5 @@ stunnel_conf=/etc/stunnel/conf.d/restreamconf.conf
 stunnel_service=stunnel4
 nginx_service=nginx
 local_rtmp_host=127.0.0.1
-local_rtmps_base_port=31935
+local_rtmps_base_port=19350
 application=live

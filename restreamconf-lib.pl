@@ -135,7 +135,7 @@ sub restreamconf_parse_rtmp_url {
 
 sub restreamconf_stream_local_port {
     my ($index) = @_;
-    return int($config{'local_rtmps_base_port'} || 31935) + int($index);
+    return int($config{'local_rtmps_base_port'} || 19350) + int($index);
 }
 
 sub restreamconf_enabled_streams {
