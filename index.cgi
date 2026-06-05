@@ -10,12 +10,13 @@ my $rows = @streams + 3;
 
 print &ui_form_start('save.cgi', 'post');
 print &ui_table_start('Incoming stream', undef, 2);
+print &ui_table_row('Public RTMP hostname', &ui_textbox('incoming_host', $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST, 32));
 print &ui_table_row('Incoming RTMP port', &ui_textbox('incoming_port', $data->{'incoming_port'} || 1935, 8));
 print &ui_table_row('Application name', '<code>' . ($config{'application'} || 'live') . '</code>');
 print &ui_table_end();
 
 print '<h3>Outgoing streams</h3>';
-print '<p>Configure each RTMP or RTMPS destination separately. RTMPS destinations are proxied through module-owned stunnel4 services, while RTMP destinations are pushed directly by nginx.</p>';
+print '<p>Configure each RTMP or RTMPS destination separately. RTMPS destinations are forwarded through module-owned stunnel4 TLS tunnels, while RTMP destinations are pushed directly by nginx.</p>';
 print '<table class="ui_table" width="100%">';
 print '<tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th></tr>';
 
@@ -36,6 +37,6 @@ print &ui_form_end([ [ 'save', 'Save' ], [ 'apply', 'Save and apply' ] ]);
 
 print '<h3>Monitoring</h3>';
 print restreamconf_render_status_table($data);
-print '<p><a href="dashboard.cgi">Open standalone monitoring view</a></p>';
+print '<p><a href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs, generated stunnel4 actions, and tunnel ports.</p>';
 
 &ui_print_footer('', '');
