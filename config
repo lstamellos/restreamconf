@@ -6,6 +6,7 @@ incoming_host=
 listen_ipv6=1
 rtmps_delivery=ffmpeg
 ffmpeg_path=/usr/bin/ffmpeg
+ffmpeg_log=/var/log/restreamconf/ffmpeg.log
 stunnel_conf=/etc/stunnel/conf.d/restreamconf.conf
 stunnel_service=stunnel4
 nginx_service=nginx

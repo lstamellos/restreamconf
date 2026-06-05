@@ -30,6 +30,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
 | `rtmps_delivery` | `ffmpeg` | RTMPS forwarding method; `ffmpeg` preserves the remote RTMPS URL for providers such as Facebook, while `stunnel` uses localhost TLS tunnels |
 | `ffmpeg_path` | `/usr/bin/ffmpeg` | ffmpeg binary used when `rtmps_delivery=ffmpeg` |
+| `ffmpeg_log` | `/var/log/restreamconf/ffmpeg.log` | ffmpeg stderr log for RTMPS forwarding failures |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `31935` | First localhost port used for RTMPS tunnel targets |
 | `application` | `live` | nginx RTMP application name |
@@ -52,7 +53,7 @@ The generated RTMP server listens on the configured port on IPv4 (`0.0.0.0`) and
 
 ## RTMPS handling
 
-nginx RTMP pushes plain RTMP directly. For RTMPS destinations, the default `rtmps_delivery=ffmpeg` mode uses nginx-rtmp `exec_push` to run ffmpeg for each active incoming stream and copy it to the full remote `rtmps://...` URL. This keeps the provider-facing RTMPS URL intact, which is important for providers such as Facebook that may reject or ignore streams whose RTMP metadata points at a localhost stunnel URL.
+nginx RTMP pushes plain RTMP directly. For RTMPS destinations, the default `rtmps_delivery=ffmpeg` mode uses nginx-rtmp `exec` (an `exec_push` alias) to run ffmpeg for each active incoming stream and copy it to the full remote `rtmps://...` URL. This keeps the provider-facing RTMPS URL intact, which is important for providers such as Facebook that may reject or ignore streams whose RTMP metadata points at a localhost stunnel URL. ffmpeg stderr is appended to the configured `ffmpeg_log` file so delivery failures are visible.
 
 The legacy `rtmps_delivery=stunnel` mode is still available. In that mode the module creates one local stunnel4 client listener per enabled RTMPS output: nginx pushes to `rtmp://127.0.0.1:<local-port>/<remote-path>`, stunnel4 accepts that local connection, and stunnel4 connects to the remote RTMPS host with TLS SNI. When applying enabled RTMPS outputs in stunnel mode, the module stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes.
 

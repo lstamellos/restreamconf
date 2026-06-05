@@ -187,6 +187,23 @@ sub restreamconf_ffmpeg_path {
     return $config{'ffmpeg_path'} || '/usr/bin/ffmpeg';
 }
 
+sub restreamconf_ffmpeg_log_path {
+    return $config{'ffmpeg_log'} || '/var/log/restreamconf/ffmpeg.log';
+}
+
+sub restreamconf_prepare_ffmpeg_log {
+    return 0 if (restreamconf_rtmps_delivery_method() ne 'ffmpeg');
+    my $path = restreamconf_ffmpeg_log_path();
+    my ($dir) = $path =~ /^(.*)\/[^\/]+$/;
+    make_dir($dir, 0775) if ($dir && !-d $dir);
+    if (!-e $path) {
+        open(my $fh, '>>', $path) || return 0;
+        close($fh);
+    }
+    chmod(0666, $path) if (-e $path);
+    return 1;
+}
+
 sub restreamconf_nginx_quote_arg {
     my ($value, $allow_vars) = @_;
     $value = '' if (!defined($value));
@@ -231,7 +248,9 @@ sub restreamconf_nginx_conf {
                 my $ffmpeg = restreamconf_nginx_quote_arg(restreamconf_ffmpeg_path(), 0);
                 my $source_arg = restreamconf_nginx_quote_arg($source, 1);
                 my $output_arg = restreamconf_nginx_quote_arg($url, 0);
-                $conf .= "            exec_push $ffmpeg -nostdin -loglevel error -i $source_arg -c copy -f flv $output_arg; # $label via ffmpeg RTMPS\n";
+                my $log_path = restreamconf_ffmpeg_log_path();
+                $log_path =~ s/[\r\n;]//g;
+                $conf .= "            exec $ffmpeg -nostdin -loglevel warning -i $source_arg -c copy -f flv $output_arg 2>>$log_path; # $label via ffmpeg RTMPS\n";
             }
         }
         else {
@@ -341,6 +360,7 @@ sub restreamconf_write_service_files {
 
     my ($nginx_dir) = $nginx_path =~ /^(.*)\/[^\/]+$/;
     make_dir($nginx_dir, 0755) if ($nginx_dir && !-d $nginx_dir);
+    restreamconf_prepare_ffmpeg_log();
 
     open(my $nginx, '>', $nginx_path) || &error("Failed to write $nginx_path: $!");
     print $nginx restreamconf_nginx_conf($data);
@@ -486,6 +506,11 @@ sub restreamconf_apply_services {
     my $cmd = "systemctl restart " . quotemeta($nginx_service) . " 2>&1";
     my $out = `$cmd`;
     push(@messages, "$nginx_service: " . ($? ? "restart failed - $out" : "restarted"));
+
+    if (restreamconf_enabled_rtmps_streams($data) && restreamconf_rtmps_delivery_method() eq 'ffmpeg') {
+        my $ffmpeg = restreamconf_ffmpeg_path();
+        push(@messages, "ffmpeg: " . (-x $ffmpeg ? "using $ffmpeg; logs append to " . restreamconf_ffmpeg_log_path() : "not executable at $ffmpeg; RTMPS forwarding will not run"));
+    }
 
     if (restreamconf_enabled_rtmps_streams($data) && restreamconf_rtmps_delivery_method() eq 'stunnel') {
         $cmd = "systemctl stop " . quotemeta($stunnel_service) . " 2>&1";
