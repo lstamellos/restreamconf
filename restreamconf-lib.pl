@@ -237,6 +237,7 @@ sub restreamconf_stunnel_conf {
                  "client = yes\n" .
                  "accept = $local_host:$local_port\n" .
                  "connect = $parsed->{'host'}:$parsed->{'port'}\n" .
+                 "sni = $parsed->{'host'}\n" .
                  "verifyChain = no\n\n";
     }
     return $conf;

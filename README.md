@@ -54,7 +54,7 @@ nginx RTMP pushes plain RTMP. For RTMPS destinations, this module creates one lo
 
 1. nginx pushes to `rtmp://127.0.0.1:<local-port>/<remote-path>`;
 2. stunnel4 accepts that local connection;
-3. stunnel4 connects to the remote RTMPS host and port using TLS.
+3. stunnel4 connects to the remote RTMPS host and port using TLS, sending the remote host as TLS SNI so providers such as Facebook route the ingest connection correctly.
 
 Inactive RTMPS outputs are saved but do not receive nginx push directives or stunnel4 service entries until re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
 
