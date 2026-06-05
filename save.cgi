@@ -5,10 +5,16 @@ require './restreamconf-lib.pl';
 &ReadParse();
 &ui_print_header(undef, $text{'save_title'} || 'Save Restream Configuration', '', undef, 1, 1);
 
+my $incoming_host = $in{'incoming_host'} || '';
+$incoming_host =~ s/^\s+|\s+$//g;
+&error('Incoming stream hostname is required') if ($incoming_host eq '');
+&error('Incoming stream hostname contains characters that are unsafe for nginx configuration') if (!restreamconf_valid_host($incoming_host));
+
 my $incoming_port = $in{'incoming_port'};
 &error('Incoming stream port must be between 1 and 65535') if (!restreamconf_valid_port($incoming_port));
 
 my $data = {
+    incoming_host => $incoming_host,
     incoming_port => int($incoming_port),
     streams => [],
 };

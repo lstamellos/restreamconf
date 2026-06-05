@@ -1,5 +1,6 @@
 streams_file=/etc/webmin/restreamconf/streams.conf
 nginx_conf=/etc/nginx/restreamconf/rtmp.conf
+incoming_host=
 stunnel_conf=/etc/stunnel/conf.d/restreamconf.conf
 stunnel_service=stunnel4
 nginx_service=nginx

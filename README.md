@@ -5,7 +5,7 @@ A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and mult
 ## What the module does
 
 - Provides a Virtualmin/Webmin configuration page for:
-  - one incoming RTMP port, configured independently from outgoing destinations;
+  - one incoming RTMP hostname and port, configured independently from outgoing destinations;
   - multiple outgoing RTMP or RTMPS stream entries;
   - per-entry enable/disable state;
   - stream URLs with explicit ports when needed;
@@ -24,6 +24,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | --- | --- | --- |
 | `streams_file` | `/etc/webmin/restreamconf/streams.conf` | Module stream database |
 | `nginx_conf` | `/etc/nginx/restreamconf/rtmp.conf` | Generated nginx RTMP config |
+| `incoming_host` | system hostname | Hostname nginx listens on and monitoring shows for the incoming RTMP ingest URL |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `31935` | First localhost port used for RTMPS tunnel targets |
 | `application` | `live` | nginx RTMP application name |
@@ -64,7 +65,7 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 
 The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The monitoring output lists:
 
-- the incoming RTMP ingest endpoint and configured port;
+- the incoming RTMP ingest endpoint with the configured hostname, port, and application path;
 - each active outgoing stream as active;
 - each disabled outgoing stream as inactive;
 - nginx and stunnel4 service states when available through `systemctl`.

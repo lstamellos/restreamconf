@@ -2,10 +2,12 @@
 
 BEGIN { push(@INC, '..'); };
 use WebminCore;
+use Sys::Hostname qw(hostname);
 
 init_config();
 our $module_config_directory ||= $config_directory;
 our $DEFAULT_INCOMING_PORT = 1935;
+our $DEFAULT_INCOMING_HOST = hostname() || 'localhost';
 
 sub restreamconf_config_path {
     return $config{'streams_file'} || "$module_config_directory/streams.conf";
@@ -13,6 +15,7 @@ sub restreamconf_config_path {
 
 sub restreamconf_default_config {
     return {
+        incoming_host => $config{'incoming_host'} || $DEFAULT_INCOMING_HOST,
         incoming_port => $DEFAULT_INCOMING_PORT,
         streams => [],
     };
@@ -41,7 +44,11 @@ sub restreamconf_read_config {
     while (my $line = <$fh>) {
         chomp($line);
         next if ($line =~ /^\s*#/ || $line =~ /^\s*$/);
-        if ($line =~ /^incoming_port=(\d+)$/) {
+        if ($line =~ /^incoming_host=(.*)$/) {
+            my $host = restreamconf_unescape($1);
+            $data->{'incoming_host'} = $host if ($host ne '');
+        }
+        elsif ($line =~ /^incoming_port=(\d+)$/) {
             $data->{'incoming_port'} = $1;
         }
         elsif ($line =~ /^stream=(.*)$/) {
@@ -69,6 +76,7 @@ sub restreamconf_write_config {
 
     open(my $fh, '>', $path) || &error("Failed to write $path: $!");
     print $fh "# Managed by Webmin/Virtualmin Restream Configuration.\n";
+    print $fh "incoming_host=" . restreamconf_escape($data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST) . "\n";
     print $fh "incoming_port=" . int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT) . "\n";
     foreach my $stream (@{$data->{'streams'} || []}) {
         print $fh join('|',
@@ -87,6 +95,19 @@ sub restreamconf_write_config {
 sub restreamconf_valid_port {
     my ($port) = @_;
     return ($port =~ /^\d+$/ && $port >= 1 && $port <= 65535);
+}
+
+sub restreamconf_valid_host {
+    my ($host) = @_;
+    return ($host =~ /^[A-Za-z0-9_.-]+$/);
+}
+
+sub restreamconf_incoming_endpoint {
+    my ($data) = @_;
+    my $host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
+    my $port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $app = $config{'application'} || 'live';
+    return "rtmp://$host:$port/$app";
 }
 
 sub restreamconf_normalize_stream_url {
@@ -150,6 +171,7 @@ sub restreamconf_remove_generated_file {
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
+    my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
@@ -157,7 +179,7 @@ sub restreamconf_nginx_conf {
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
                "rtmp {\n" .
                "    server {\n" .
-               "        listen $incoming_port;\n" .
+               "        listen $incoming_host:$incoming_port;\n" .
                "        chunk_size 4096;\n\n" .
                "        application $app {\n" .
                "            live on;\n" .
@@ -291,9 +313,9 @@ sub restreamconf_service_active {
 
 sub restreamconf_render_status_table {
     my ($data) = @_;
-    my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my $incoming_endpoint = restreamconf_incoming_endpoint($data);
     my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
-    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'listening on configured port', &html_escape("rtmp://<server>:$incoming_port/") ]);
+    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'listening on configured host and port', &html_escape($incoming_endpoint) ]);
     foreach my $stream (@{$data->{'streams'} || []}) {
         my $state = $stream->{'enabled'} ? 'active' : 'inactive';
         my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
