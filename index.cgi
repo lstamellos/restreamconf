@@ -16,7 +16,7 @@ print &ui_table_row('Application name', '<code>' . ($config{'application'} || 'l
 print &ui_table_end();
 
 print '<h3>Outgoing streams</h3>';
-print '<p>Configure each RTMP or RTMPS destination separately. RTMPS destinations are forwarded with the configured RTMPS delivery method (ffmpeg by default, stunnel optional), while RTMP destinations are pushed directly by nginx.</p>';
+print '<p>Configure each RTMP or RTMPS destination separately. RTMPS destinations are forwarded through module-owned stunnel4 TLS tunnels, while RTMP destinations are pushed directly by nginx.</p>';
 print '<table class="ui_table" width="100%">';
 print '<tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th></tr>';
 
@@ -37,6 +37,6 @@ print &ui_form_end([ [ 'save', 'Save' ], [ 'apply', 'Save and apply' ] ]);
 
 print '<h3>Monitoring</h3>';
 print restreamconf_render_status_table($data);
-print '<p><a href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs, generated RTMPS actions, and ffmpeg log output.</p>';
+print '<p><a href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs, generated stunnel4 actions, and tunnel ports.</p>';
 
 &ui_print_footer('', '');
