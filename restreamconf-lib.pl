@@ -216,6 +216,7 @@ sub restreamconf_nginx_quote_arg {
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
+    my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
