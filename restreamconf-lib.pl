@@ -446,20 +446,27 @@ sub restreamconf_listening_pids_for_port {
 
 sub restreamconf_release_stunnel_ports {
     my ($data) = @_;
-    my %killed;
+    my %released;
+
     foreach my $port (restreamconf_enabled_rtmps_local_ports($data)) {
         my @pids = restreamconf_listening_pids_for_port($port);
         next if (!@pids);
+
         kill('TERM', @pids);
-        sleep(1);
-        foreach my $pid (@pids) {
-            if (kill(0, $pid)) {
-                kill('KILL', $pid);
-            }
-            $killed{$port} = 1;
+        for (my $i = 0; $i < 10 && restreamconf_listening_pids_for_port($port); $i++) {
+            select(undef, undef, undef, 0.2);
         }
+
+        @pids = restreamconf_listening_pids_for_port($port);
+        kill('KILL', @pids) if (@pids);
+        for (my $i = 0; $i < 10 && restreamconf_listening_pids_for_port($port); $i++) {
+            select(undef, undef, undef, 0.2);
+        }
+
+        $released{$port} = 1 if (!restreamconf_listening_pids_for_port($port));
     }
-    return sort { $a <=> $b } keys(%killed);
+
+    return sort { $a <=> $b } keys(%released);
 }
 
 sub restreamconf_restart_command {
@@ -481,6 +488,8 @@ sub restreamconf_apply_services {
     if (restreamconf_enabled_rtmps_streams($data)) {
         $cmd = "systemctl stop " . quotemeta($stunnel_service) . " 2>&1";
         $out = `$cmd`;
+        $cmd = "systemctl kill -s KILL " . quotemeta($stunnel_service) . " 2>&1";
+        $out .= `$cmd`;
         my @released_ports = restreamconf_release_stunnel_ports($data);
         $cmd = "systemctl start " . quotemeta($stunnel_service) . " 2>&1";
         $out = `$cmd`;
