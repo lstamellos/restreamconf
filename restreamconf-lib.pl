@@ -244,7 +244,7 @@ sub restreamconf_nginx_conf {
                 $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
             }
             else {
-                my $source = "rtmp://$local_host:$incoming_port/\$app/\$name";
+                my $source = "rtmp://$local_host:$incoming_port/\$app";
                 my $ffmpeg = restreamconf_nginx_quote_arg(restreamconf_ffmpeg_path(), 0);
                 my $source_arg = restreamconf_nginx_quote_arg($source, 1);
                 my $output_arg = restreamconf_nginx_quote_arg($url, 0);
@@ -611,7 +611,7 @@ sub restreamconf_render_diagnostics {
             my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
             my $action;
             if ($method eq 'ffmpeg') {
-                $action = 'ffmpeg copies rtmp://127.0.0.1:' . $incoming_port . '/$app/$name to ' . restreamconf_mask_secret_url($url);
+                $action = 'ffmpeg copies rtmp://127.0.0.1:' . $incoming_port . '/$app to ' . restreamconf_mask_secret_url($url);
             }
             else {
                 my $local_port = restreamconf_stream_local_port($rtmps_index++);
