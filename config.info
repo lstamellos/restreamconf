@@ -1,5 +1,6 @@
 streams_file=Stream database file,0
 nginx_conf=Generated nginx RTMP configuration file,0
+incoming_host=Public incoming RTMP hostname shown to OBS,0
 stunnel_conf=Generated stunnel4 configuration file,0
 stunnel_service=stunnel4 systemd service name,0
 nginx_service=nginx systemd service name,0
