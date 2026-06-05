@@ -33,15 +33,22 @@ sub restreamconf_icon_button {
     return '<input type="button" class="' . &html_escape($class) . '" value="' . &html_escape($value) . '" title="' . &html_escape($title) . '" aria-label="' . &html_escape($title) . '" ' . $attrs . '>';
 }
 
+sub restreamconf_status_badges {
+    my ($enabled, $active) = @_;
+    return '<span class="rc-badges"><span class="rc-badge rc-enabled-badge">' . ($enabled ? 'Enabled' : 'Disabled') . '</span> ' .
+        '<span class="rc-badge rc-active-badge">' . ($active ? 'Active' : 'Inactive') . '</span></span>';
+}
+
 sub restreamconf_stream_row_html {
-    my ($stream_row, $group_id, $stream, $is_blank) = @_;
+    my ($stream_row, $group_id, $stream, $is_blank, $data) = @_;
     $stream ||= {};
     my $id = $stream->{'id'} || restreamconf_new_id('stream', $stream_row);
     my $row_class = $is_blank ? ' rc-empty-row' : '';
     my $enabled = defined($stream->{'enabled'}) ? $stream->{'enabled'} : 1;
+    my $active = (!$is_blank && restreamconf_stream_active($data, $stream)) ? 1 : 0;
     my $html = '<tr class="rc-stream-row' . $row_class . '" data-row-index="' . int($stream_row) . '">';
     $html .= '<td class="rc-stream-actions">' . &ui_hidden("id_$stream_row", $id) . &ui_hidden("group_$stream_row", $group_id) . &ui_checkbox("enabled_$stream_row", 1, '', $enabled) . '</td>';
-    $html .= '<td>' . &ui_textbox("name_$stream_row", $stream->{'name'} || '', 18) . '</td>';
+    $html .= '<td><span class="rc-name-with-badges">' . &ui_textbox("name_$stream_row", $stream->{'name'} || '', 18) . ' ' . restreamconf_status_badges($enabled, $active) . '</span></td>';
     $html .= '<td>' . &ui_select("protocol_$stream_row", $stream->{'protocol'} || 'rtmp', [ [ 'rtmp', 'RTMP' ], [ 'rtmps', 'RTMPS' ] ]) . '</td>';
     $html .= '<td>' . &ui_textbox("url_$stream_row", $stream->{'url'} || '', 45) . '</td>';
     $html .= '<td>' . &ui_textbox("key_$stream_row", $stream->{'key'} || '', 24) . '</td>';
@@ -49,7 +56,6 @@ sub restreamconf_stream_row_html {
     $html .= '</tr>';
     return $html;
 }
-
 print <<'STYLE';
 <style>
 .rc-shell { max-width: 1220px; }
@@ -65,7 +71,9 @@ print <<'STYLE';
 .rc-group-summary { align-items: center; cursor: pointer; display: flex; gap: .75em; justify-content: space-between; padding: .35em; }
 .rc-group-heading { align-items: center; display: flex; flex-wrap: wrap; gap: .5em; min-width: 0; }
 .rc-group-title { font-weight: bold; }
+.rc-badges { white-space: nowrap; }
 .rc-badge, .rc-stream-count { font-size: .9em; }
+.rc-name-with-badges { align-items: center; display: flex; flex-wrap: wrap; gap: .35em; }
 .rc-group-tools, .rc-toolbar, .rc-row-tools { align-items: center; display: flex; flex-wrap: wrap; gap: .35em; }
 .rc-group-body { padding: .5em .25em .25em; }
 .rc-group:not([open]) .rc-group-body { display: none; }
@@ -107,14 +115,22 @@ for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
     my $group = $group_form_rows[$group_index];
     my @group_streams = @{$streams_by_group{$group->{'id'}} || []};
     my $summary_state = $group->{'enabled'} ? 'Enabled' : 'Disabled';
-    my $details_attr = ($group_index < @groups || @group_streams) ? ' open' : '';
+    my $group_active = 0;
+    foreach my $group_stream (@group_streams) {
+        if (restreamconf_stream_active($data, $group_stream)) {
+            $group_active = 1;
+            last;
+        }
+    }
+    my $active_state = $group_active ? 'Active' : 'Inactive';
+    my $details_attr = '';
     my $hidden_attr = (!$group->{'is_existing'} && !@group_streams && $group->{'name'} eq '') ? ' hidden' : '';
     my $stream_count = scalar(@group_streams);
     my $title = $group->{'name'} || 'New group ' . ($group_index + 1);
 
     print '<details class="ui_table rc-group" data-group-index="' . int($group_index) . '" data-group-id="' . &html_escape($group->{'id'}) . '"' . $details_attr . $hidden_attr . '>';
     print '<summary class="rc-group-summary">';
-    print '<span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">' . &html_escape($title) . '</span><span class="rc-badge' . ($group->{'enabled'} ? '' : ' rc-disabled') . '">' . $summary_state . '</span><span class="rc-stream-count">' . int($stream_count) . ' stream' . ($stream_count == 1 ? '' : 's') . '</span></span>';
+    print '<span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">' . &html_escape($title) . '</span><span class="rc-badge rc-enabled-badge">' . $summary_state . '</span><span class="rc-badge rc-active-badge">' . $active_state . '</span><span class="rc-stream-count">' . int($stream_count) . ' stream' . ($stream_count == 1 ? '' : 's') . '</span></span>';
     print '<span class="rc-group-tools">' . restreamconf_icon_button('rc-edit-group', 'Edit', '✏️', 'Edit this group') . restreamconf_icon_button('rc-add-stream', 'Add config', '➕', 'Add a stream configuration to this group') . restreamconf_icon_button('rc-remove-group', 'Remove', '🗑️', 'Remove this group') . '</span>';
     print '</summary>';
     print '<div class="rc-group-body">';
@@ -125,10 +141,10 @@ for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
     print '</div>';
     print '<table class="ui_table rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody>';
     foreach my $stream (@group_streams) {
-        print restreamconf_stream_row_html($stream_row, $group->{'id'}, $stream, 0);
+        print restreamconf_stream_row_html($stream_row, $group->{'id'}, $stream, 0, $data);
         $stream_row++;
     }
-    print restreamconf_stream_row_html($stream_row, $group->{'id'}, {}, 1);
+    print restreamconf_stream_row_html($stream_row, $group->{'id'}, {}, 1, $data);
     $stream_row++;
     print '</tbody></table>';
     print '</div></details>';
@@ -159,30 +175,49 @@ print <<'SCRIPT';
     qsa('.rc-tab').forEach(function(tab) { tab.setAttribute('aria-selected', tab === button ? 'true' : 'false'); });
     qsa('.rc-tab-panel').forEach(function(panel) { panel.classList.toggle('rc-active', panel.id === button.getAttribute('data-tab-target')); });
   }
+  function rowHasConfig(row) {
+    var name = qs('input[name^="name_"]', row);
+    var url = qs('input[name^="url_"]', row);
+    var key = qs('input[name^="key_"]', row);
+    return (name && name.value.trim()) || (url && url.value.trim()) || (key && key.value.trim());
+  }
+  function rowIsActive(row, groupEnabled) {
+    var enabled = qs('input[name^="enabled_"]', row);
+    var url = qs('input[name^="url_"]', row);
+    return !!(groupEnabled && enabled && enabled.checked && url && url.value.trim());
+  }
+  function updateBadge(badge, activeText, inactiveText, isActive) {
+    if (badge) badge.textContent = isActive ? activeText : inactiveText;
+  }
+  function updateStreamBadges(group) {
+    var groupEnabled = !!(qs('input[name^="group_enabled_"]', group) || {}).checked;
+    qsa('.rc-stream-row', group).forEach(function(row) {
+      var enabled = qs('input[name^="enabled_"]', row);
+      updateBadge(qs('.rc-enabled-badge', row), 'Enabled', 'Disabled', !!(enabled && enabled.checked));
+      updateBadge(qs('.rc-active-badge', row), 'Active', 'Inactive', rowIsActive(row, groupEnabled));
+    });
+  }
   function updateGroupSummary(group) {
     var nameInput = qs('input[name^="group_name_"]', group);
     var enabledInput = qs('input[name^="group_enabled_"]', group);
-    var title = qs('.rc-group-title', group);
-    var badge = qs('.rc-badge', group);
-    var count = qsa('.rc-stream-row', group).filter(function(row) {
-      var name = qs('input[name^="name_"]', row);
-      var url = qs('input[name^="url_"]', row);
-      var key = qs('input[name^="key_"]', row);
-      return (name && name.value.trim()) || (url && url.value.trim()) || (key && key.value.trim());
-    }).length;
+    var summary = qs('.rc-group-summary', group);
+    var title = qs('.rc-group-title', summary);
+    var rows = qsa('.rc-stream-row', group);
+    var count = rows.filter(rowHasConfig).length;
+    var groupEnabled = !!(enabledInput && enabledInput.checked);
+    var groupActive = rows.some(function(row) { return rowIsActive(row, groupEnabled); });
     if (title && nameInput) title.textContent = nameInput.value.trim() || 'New group ' + (Number(group.getAttribute('data-group-index')) + 1);
-    if (badge && enabledInput) {
-      badge.textContent = enabledInput.checked ? 'Enabled' : 'Disabled';
-      badge.classList.toggle('rc-disabled', !enabledInput.checked);
-    }
+    updateBadge(qs('.rc-enabled-badge', summary), 'Enabled', 'Disabled', groupEnabled);
+    updateBadge(qs('.rc-active-badge', summary), 'Active', 'Inactive', groupActive);
     var countEl = qs('.rc-stream-count', group);
     if (countEl) countEl.textContent = count + ' stream' + (count === 1 ? '' : 's');
+    updateStreamBadges(group);
   }
   function streamRowHtml(rowIndex, groupId) {
     var safeGroup = esc(groupId);
     return '<tr class="rc-stream-row rc-empty-row" data-row-index="' + rowIndex + '">' +
       '<td class="rc-stream-actions"><input type="hidden" name="id_' + rowIndex + '" value="stream_' + Date.now() + '_' + rowIndex + '"><input type="hidden" name="group_' + rowIndex + '" value="' + safeGroup + '"><input type="checkbox" name="enabled_' + rowIndex + '" value="1" checked></td>' +
-      '<td><input type="text" name="name_' + rowIndex + '" size="18" value=""></td>' +
+      '<td><span class="rc-name-with-badges"><input type="text" name="name_' + rowIndex + '" size="18" value=""> <span class="rc-badges"><span class="rc-badge rc-enabled-badge">Enabled</span> <span class="rc-badge rc-active-badge">Inactive</span></span></span></td>' +
       '<td><select name="protocol_' + rowIndex + '"><option value="rtmp" selected>RTMP</option><option value="rtmps">RTMPS</option></select></td>' +
       '<td><input type="text" name="url_' + rowIndex + '" size="45" value=""></td>' +
       '<td><input type="text" name="key_' + rowIndex + '" size="24" value=""></td>' +
@@ -208,7 +243,7 @@ print <<'SCRIPT';
     var groupIndex = Number(groupsInput.value || 0);
     var groupId = 'group_' + Date.now() + '_' + groupIndex;
     var html = '<details class="ui_table rc-group" data-group-index="' + groupIndex + '" data-group-id="' + esc(groupId) + '" open>' +
-      '<summary class="rc-group-summary"><span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">New group ' + (groupIndex + 1) + '</span><span class="rc-badge">Enabled</span><span class="rc-stream-count">0 streams</span></span>' +
+      '<summary class="rc-group-summary"><span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">New group ' + (groupIndex + 1) + '</span><span class="rc-badge rc-enabled-badge">Enabled</span><span class="rc-badge rc-active-badge">Inactive</span><span class="rc-stream-count">0 streams</span></span>' +
       '<span class="rc-group-tools"><input type="button" class="rc-edit-group" value="✏️ Edit" title="Edit this group" aria-label="Edit this group"><input type="button" class="rc-add-stream" value="➕ Add config" title="Add a stream configuration to this group" aria-label="Add a stream configuration to this group"><input type="button" class="rc-remove-group" value="🗑️ Remove" title="Remove this group" aria-label="Remove this group"></span></summary>' +
       '<div class="rc-group-body"><input type="hidden" name="group_id_' + groupIndex + '" value="' + esc(groupId) + '"><div class="rc-group-fields"><label><b>Enabled</b> <input type="checkbox" name="group_enabled_' + groupIndex + '" value="1" checked></label><label><b>Group name</b> <input type="text" name="group_name_' + groupIndex + '" size="30" value=""></label></div>' +
       '<table class="ui_table rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody></tbody></table></div></details>';
