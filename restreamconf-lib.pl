@@ -179,6 +179,12 @@ sub restreamconf_nginx_listen_directives {
 
 
 
+sub restreamconf_rtmps_delivery_method {
+    # Backward-compatible shim for older installed module code paths.
+    # RTMPS delivery is stunnel4-only; any previous rtmps_delivery config value is ignored.
+    return 'stunnel';
+}
+
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
