@@ -53,38 +53,31 @@ sub restreamconf_stream_row_html {
 print <<'STYLE';
 <style>
 .rc-shell { max-width: 1220px; }
-.rc-card { background: #fff; border: 1px solid #d7dde8; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); margin: 1em 0; overflow: hidden; }
-.rc-card-body { padding: 1em; }
-.rc-intro { color: #56606f; line-height: 1.5; max-width: 920px; }
-.rc-tabs { display: flex; flex-wrap: wrap; gap: .4em; border-bottom: 1px solid #d7dde8; margin: 1.25em 0 0; }
-.rc-tab { background: #f4f7fb; border: 1px solid #d7dde8; border-bottom: 0; border-radius: 8px 8px 0 0; color: #334155; cursor: pointer; font-weight: 600; padding: .7em 1em; }
-.rc-tab[aria-selected="true"] { background: #fff; color: #0f5ca8; position: relative; top: 1px; }
+.rc-intro { line-height: 1.5; max-width: 920px; }
+.rc-tabs { display: flex; flex-wrap: wrap; gap: .25em; margin: 1em 0; }
+.rc-tab { cursor: pointer; font: inherit; padding: .45em .8em; }
+.rc-tab[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
 .rc-tab-panel { display: none; }
 .rc-tab-panel.rc-active { display: block; }
 .rc-section-title { align-items: center; display: flex; gap: .5em; justify-content: space-between; margin: 0 0 .75em; }
-.rc-group { border: 1px solid #d7dde8; border-radius: 10px; margin: .9em 0; overflow: hidden; }
+.rc-section-title h3 { margin-bottom: 0; }
+.rc-group { margin: 1em 0; padding: .25em; }
 .rc-group[hidden] { display: none; }
-.rc-group-summary { align-items: center; background: #f8fafc; cursor: pointer; display: flex; gap: .75em; justify-content: space-between; padding: .85em 1em; }
-.rc-group-summary:hover { background: #eef5ff; }
-.rc-group-heading { align-items: center; display: flex; gap: .65em; min-width: 0; }
-.rc-caret { color: #64748b; font-size: 1.15em; }
-.rc-group-title { font-size: 1.05em; font-weight: 700; }
-.rc-badge { background: #e0f2fe; border-radius: 999px; color: #075985; display: inline-block; font-size: .85em; font-weight: 600; padding: .2em .65em; }
-.rc-badge.rc-disabled { background: #fee2e2; color: #991b1b; }
-.rc-group-tools, .rc-toolbar, .rc-row-tools { align-items: center; display: flex; flex-wrap: wrap; gap: .4em; }
-.rc-group-body { border-top: 1px solid #d7dde8; padding: 1em; }
+.rc-group-summary { align-items: center; cursor: pointer; display: flex; gap: .75em; justify-content: space-between; padding: .35em; }
+.rc-group-heading { align-items: center; display: flex; flex-wrap: wrap; gap: .5em; min-width: 0; }
+.rc-group-title { font-weight: bold; }
+.rc-badge, .rc-stream-count { font-size: .9em; }
+.rc-group-tools, .rc-toolbar, .rc-row-tools { align-items: center; display: flex; flex-wrap: wrap; gap: .35em; }
+.rc-group-body { padding: .5em .25em .25em; }
 .rc-group:not([open]) .rc-group-body { display: none; }
-.rc-group-fields { align-items: center; background: #fbfdff; border: 1px solid #e5eaf1; border-radius: 8px; display: flex; flex-wrap: wrap; gap: .75em 1.25em; margin-bottom: 1em; padding: .8em; }
-.rc-stream-table { border-collapse: collapse; width: 100%; }
-.rc-stream-table th { background: #f1f5f9; color: #334155; text-align: left; }
-.rc-stream-table th, .rc-stream-table td { border-bottom: 1px solid #e5eaf1; padding: .45em; vertical-align: middle; }
+.rc-group-fields { align-items: center; display: flex; flex-wrap: wrap; gap: .75em 1.25em; margin-bottom: .75em; }
+.rc-stream-table { width: 100%; }
+.rc-stream-table th, .rc-stream-table td { padding: .35em; vertical-align: middle; }
 .rc-stream-table input[type="text"] { max-width: 100%; }
-.rc-icon-button { align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 7px; color: #1f2937; cursor: pointer; display: inline-flex; gap: .35em; line-height: 1.2; padding: .45em .65em; }
-.rc-icon-button:hover { background: #eaf4ff; border-color: #93c5fd; color: #0f5ca8; }
-.rc-add-group, .rc-add-stream { background: #ecfdf5; border-color: #86efac; color: #166534; }
-.rc-remove-group, .rc-remove-stream { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
-.rc-monitor-link { font-weight: 600; }
-@media (max-width: 760px) { .rc-icon-label { display: none; } .rc-stream-table { display: block; overflow-x: auto; } .rc-tabs { border-bottom: 0; } .rc-tab { border: 1px solid #d7dde8; border-radius: 8px; } }
+.rc-icon-button { cursor: pointer; font: inherit; line-height: 1.2; padding: .25em .5em; }
+.rc-icon { margin-right: .25em; }
+.rc-monitor-link { font-weight: bold; }
+@media (max-width: 760px) { .rc-icon-label { display: none; } .rc-stream-table { display: block; overflow-x: auto; } }
 </style>
 STYLE
 
@@ -99,18 +92,15 @@ print '<button type="button" class="rc-tab" role="tab" aria-selected="false" ari
 print '</div>';
 
 print '<section class="rc-tab-panel rc-active" role="tabpanel" id="rc-panel-incoming" aria-labelledby="rc-tab-incoming">';
-print '<div class="rc-card"><div class="rc-card-body">';
 print '<div class="rc-section-title"><h3>📥 Incoming stream</h3></div>';
 print &ui_table_start('Incoming stream', undef, 2);
 print &ui_table_row('Public RTMP hostname', &ui_textbox('incoming_host', $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST, 32));
 print &ui_table_row('Incoming RTMP port', &ui_textbox('incoming_port', $data->{'incoming_port'} || 1935, 8));
 print &ui_table_row('Application name', '<code>' . &html_escape($config{'application'} || 'live') . '</code>');
 print &ui_table_end();
-print '</div></div>';
 print '</section>';
 
 print '<section class="rc-tab-panel" role="tabpanel" id="rc-panel-destinations" aria-labelledby="rc-tab-destinations">';
-print '<div class="rc-card"><div class="rc-card-body">';
 print '<div class="rc-section-title"><h3>📡 Outgoing destinations</h3><div class="rc-toolbar">' . restreamconf_icon_button('rc-add-group', 'Add group', '➕', 'Add a new group', 'id="rc-add-group"') . '</div></div>';
 print '<p class="rc-intro">Configure each destination group in its own accordion. A destination only pushes when both its group and its own row are enabled. RTMPS destinations are forwarded through module-owned stunnel4 TLS tunnels, while RTMP destinations are pushed directly by nginx.</p>';
 print '<div id="rc-groups">';
@@ -125,7 +115,7 @@ for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
     my $stream_count = scalar(@group_streams);
     my $title = $group->{'name'} || 'New group ' . ($group_index + 1);
 
-    print '<details class="rc-group" data-group-index="' . int($group_index) . '" data-group-id="' . &html_escape($group->{'id'}) . '"' . $details_attr . $hidden_attr . '>';
+    print '<details class="ui_table rc-group" data-group-index="' . int($group_index) . '" data-group-id="' . &html_escape($group->{'id'}) . '"' . $details_attr . $hidden_attr . '>';
     print '<summary class="rc-group-summary">';
     print '<span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">' . &html_escape($title) . '</span><span class="rc-badge' . ($group->{'enabled'} ? '' : ' rc-disabled') . '">' . $summary_state . '</span><span class="rc-stream-count">' . int($stream_count) . ' stream' . ($stream_count == 1 ? '' : 's') . '</span></span>';
     print '<span class="rc-group-tools">' . restreamconf_icon_button('rc-edit-group', 'Edit', '✏️', 'Edit this group') . restreamconf_icon_button('rc-add-stream', 'Add config', '➕', 'Add a stream configuration to this group') . restreamconf_icon_button('rc-remove-group', 'Remove', '🗑️', 'Remove this group') . '</span>';
@@ -136,7 +126,7 @@ for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
     print '<label><b>Enabled</b> ' . &ui_checkbox("group_enabled_$group_index", 1, '', $group->{'enabled'}) . '</label>';
     print '<label><b>Group name</b> ' . &ui_textbox("group_name_$group_index", $group->{'name'}, 30) . '</label>';
     print '</div>';
-    print '<table class="rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody>';
+    print '<table class="ui_table rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody>';
     foreach my $stream (@group_streams) {
         print restreamconf_stream_row_html($stream_row, $group->{'id'}, $stream, 0);
         $stream_row++;
@@ -149,15 +139,12 @@ for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
 print '</div>';
 print &ui_hidden('group_rows', $group_rows);
 print &ui_hidden('rows', $stream_row);
-print '</div></div>';
 print '</section>';
 
 print '<section class="rc-tab-panel" role="tabpanel" id="rc-panel-monitoring" aria-labelledby="rc-tab-monitoring">';
-print '<div class="rc-card"><div class="rc-card-body">';
 print '<div class="rc-section-title"><h3>📊 Monitoring</h3></div>';
 print restreamconf_render_status_table($data);
 print '<p><a class="rc-monitor-link" href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs, generated stunnel4 actions, and tunnel ports.</p>';
-print '</div></div>';
 print '</section>';
 
 print &ui_form_end([ [ 'save', 'Save' ], [ 'apply', 'Save and apply' ] ]);
@@ -223,11 +210,11 @@ print <<'SCRIPT';
     var groupsInput = nextGroups();
     var groupIndex = Number(groupsInput.value || 0);
     var groupId = 'group_' + Date.now() + '_' + groupIndex;
-    var html = '<details class="rc-group" data-group-index="' + groupIndex + '" data-group-id="' + esc(groupId) + '" open>' +
+    var html = '<details class="ui_table rc-group" data-group-index="' + groupIndex + '" data-group-id="' + esc(groupId) + '" open>' +
       '<summary class="rc-group-summary"><span class="rc-group-heading"><span class="rc-caret" aria-hidden="true">▸</span><span class="rc-group-title">New group ' + (groupIndex + 1) + '</span><span class="rc-badge">Enabled</span><span class="rc-stream-count">0 streams</span></span>' +
       '<span class="rc-group-tools"><button type="button" class="rc-icon-button rc-edit-group" title="Edit this group" aria-label="Edit this group"><span class="rc-icon" aria-hidden="true">✏️</span><span class="rc-icon-label">Edit</span></button><button type="button" class="rc-icon-button rc-add-stream" title="Add a stream configuration to this group" aria-label="Add a stream configuration to this group"><span class="rc-icon" aria-hidden="true">➕</span><span class="rc-icon-label">Add config</span></button><button type="button" class="rc-icon-button rc-remove-group" title="Remove this group" aria-label="Remove this group"><span class="rc-icon" aria-hidden="true">🗑️</span><span class="rc-icon-label">Remove</span></button></span></summary>' +
       '<div class="rc-group-body"><input type="hidden" name="group_id_' + groupIndex + '" value="' + esc(groupId) + '"><div class="rc-group-fields"><label><b>Enabled</b> <input type="checkbox" name="group_enabled_' + groupIndex + '" value="1" checked></label><label><b>Group name</b> <input type="text" name="group_name_' + groupIndex + '" size="30" value=""></label></div>' +
-      '<table class="rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody></tbody></table></div></details>';
+      '<table class="ui_table rc-stream-table"><thead><tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th><th>Actions</th></tr></thead><tbody></tbody></table></div></details>';
     qs('#rc-groups').insertAdjacentHTML('beforeend', html);
     groupsInput.value = groupIndex + 1;
     addStream(qs('.rc-group[data-group-id="' + groupId + '"]'));
