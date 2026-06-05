@@ -244,6 +244,55 @@ sub restreamconf_stunnel_config_path {
     return $stunnel_path;
 }
 
+
+sub restreamconf_nginx_main_conf_path {
+    return $config{'nginx_main_conf'} || '/etc/nginx/nginx.conf';
+}
+
+sub restreamconf_manage_nginx_include {
+    return 1 if (!defined($config{'manage_nginx_include'}) || $config{'manage_nginx_include'} eq '');
+    return ($config{'manage_nginx_include'} !~ /^(0|no|false)$/i);
+}
+
+sub restreamconf_ensure_nginx_include {
+    my ($nginx_path) = @_;
+    return 0 if (!restreamconf_manage_nginx_include());
+
+    my $main_conf = restreamconf_nginx_main_conf_path();
+    return 0 if (!$main_conf || !-f $main_conf || !-r $main_conf || !-w $main_conf);
+
+    open(my $in, '<', $main_conf) || return 0;
+    my @lines = <$in>;
+    close($in);
+
+    my $include_line = "include $nginx_path;";
+    foreach my $line (@lines) {
+        return 0 if ($line =~ /^\s*include\s+\Q$nginx_path\E\s*;\s*$/);
+    }
+
+    my @updated;
+    my $inserted = 0;
+    foreach my $line (@lines) {
+        if (!$inserted && $line =~ /^\s*http\s*\{/) {
+            push(@updated,
+                "# Managed by Webmin/Virtualmin Restream Configuration.\n",
+                "$include_line\n\n");
+            $inserted = 1;
+        }
+        push(@updated, $line);
+    }
+    if (!$inserted) {
+        push(@updated,
+            "\n# Managed by Webmin/Virtualmin Restream Configuration.\n",
+            "$include_line\n");
+    }
+
+    open(my $out, '>', $main_conf) || return 0;
+    print $out @updated;
+    close($out);
+    return 1;
+}
+
 sub restreamconf_write_service_files {
     my ($data) = @_;
     my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
@@ -256,6 +305,7 @@ sub restreamconf_write_service_files {
     open(my $nginx, '>', $nginx_path) || &error("Failed to write $nginx_path: $!");
     print $nginx restreamconf_nginx_conf($data);
     close($nginx);
+    restreamconf_ensure_nginx_include($nginx_path);
 
     my $stunnel_conf = restreamconf_stunnel_conf($data);
     if (defined($stunnel_conf)) {
@@ -315,7 +365,7 @@ sub restreamconf_render_status_table {
     my ($data) = @_;
     my $incoming_endpoint = restreamconf_incoming_endpoint($data);
     my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
-    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'listening on configured host and port', &html_escape($incoming_endpoint) ]);
+    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'public ingest endpoint', &html_escape($incoming_endpoint) ]);
     foreach my $stream (@{$data->{'streams'} || []}) {
         my $state = $stream->{'enabled'} ? 'active' : 'inactive';
         my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');

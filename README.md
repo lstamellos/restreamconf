@@ -24,6 +24,8 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | --- | --- | --- |
 | `streams_file` | `/etc/webmin/restreamconf/streams.conf` | Module stream database |
 | `nginx_conf` | `/etc/nginx/restreamconf/rtmp.conf` | Generated nginx RTMP config |
+| `nginx_main_conf` | `/etc/nginx/nginx.conf` | Main nginx config where the module installs the RTMP include |
+| `manage_nginx_include` | `1` | Automatically include the generated RTMP config from the main nginx config |
 | `incoming_host` | system hostname | Public hostname shown in the incoming RTMP ingest URL for OBS or other encoders |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `31935` | First localhost port used for RTMPS tunnel targets |
@@ -31,13 +33,19 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 
 ## nginx isolation model
 
-The module writes only its own nginx file and does not modify existing nginx sites or global configuration. To activate the generated RTMP block, include the generated file from the top level of `nginx.conf`, not inside the `http {}` block:
+The module writes its RTMP server block to its own nginx file and, by default, installs a top-level include for that file in `nginx.conf` before the `http {}` block. The include must be top-level because the nginx RTMP module does not run from inside the HTTP context:
 
 ```nginx
 include /etc/nginx/restreamconf/rtmp.conf;
+
+http {
+    ...
+}
 ```
 
-This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming while still ensuring nginx actually loads the RTMP listener. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+
+The generated RTMP server listens on the configured port on all interfaces, while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address.
 
 The generated RTMP server listens on the configured port on all interfaces, while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address.
 
