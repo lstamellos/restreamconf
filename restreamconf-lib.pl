@@ -534,6 +534,103 @@ sub restreamconf_apply_services {
     return @messages;
 }
 
+
+sub restreamconf_mask_secret_url {
+    my ($url) = @_;
+    $url = '' if (!defined($url));
+    $url =~ s!/(.{4})[^/]*(\z|[?#])!/$1...$2!;
+    return $url;
+}
+
+sub restreamconf_file_tail {
+    my ($path, $lines) = @_;
+    $lines ||= 40;
+    return "" if (!$path || !-r $path);
+    open(my $fh, '<', $path) || return "";
+    my @data = <$fh>;
+    close($fh);
+    my $start = @data > $lines ? @data - $lines : 0;
+    return join('', @data[$start .. $#data]);
+}
+
+sub restreamconf_command_output {
+    my ($cmd) = @_;
+    my $out = `$cmd 2>&1`;
+    my $code = $? >> 8;
+    chomp($out);
+    return ($code, $out);
+}
+
+sub restreamconf_nginx_include_status {
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
+    my $main_conf = restreamconf_nginx_main_conf_path();
+    return 'main nginx config is not readable' if (!$main_conf || !-r $main_conf);
+    open(my $fh, '<', $main_conf) || return "failed to read $main_conf: $!";
+    my $content = do { local $/; <$fh> };
+    close($fh);
+    return ($content =~ /^\s*include\s+\Q$nginx_path\E\s*;\s*$/m) ? 'included' : 'missing include';
+}
+
+sub restreamconf_render_diagnostics {
+    my ($data) = @_;
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
+    my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my @incoming_pids = restreamconf_listening_pids_for_port($incoming_port);
+    my @rtmps = restreamconf_enabled_rtmps_streams($data);
+    my $method = restreamconf_rtmps_delivery_method();
+    my $ffmpeg = restreamconf_ffmpeg_path();
+    my $ffmpeg_log = restreamconf_ffmpeg_log_path();
+    my ($nginx_test_code, $nginx_test_out) = restreamconf_command_output('nginx -t');
+
+    my $html = '<h3>Diagnostics</h3>';
+    $html .= '<p>Use this section to locate where forwarding stops: nginx config loading, incoming listener, RTMPS command generation, ffmpeg availability, or ffmpeg/Facebook errors.</p>';
+    $html .= &ui_columns_start([ 'Check', 'Result' ], 100);
+    $html .= &ui_columns_row([ 'RTMPS delivery method', &html_escape($method) ]);
+    $html .= &ui_columns_row([ 'Generated nginx RTMP config', &html_escape((-r $nginx_path ? "$nginx_path readable" : "$nginx_path missing or unreadable")) ]);
+    $html .= &ui_columns_row([ 'Top-level nginx include', &html_escape(restreamconf_nginx_include_status()) ]);
+    $html .= &ui_columns_row([ 'nginx -t', &html_escape(($nginx_test_code == 0 ? 'OK' : "FAILED ($nginx_test_code)") . ($nginx_test_out ? ": $nginx_test_out" : '')) ]);
+    $html .= &ui_columns_row([ 'Incoming RTMP listener PIDs', &html_escape(@incoming_pids ? join(', ', sort { $a <=> $b } @incoming_pids) : "none found on port $incoming_port") ]);
+    $html .= &ui_columns_row([ 'Enabled RTMPS outputs', &html_escape(scalar(@rtmps)) ]);
+    if ($method eq 'ffmpeg') {
+        $html .= &ui_columns_row([ 'ffmpeg binary', &html_escape((-x $ffmpeg ? "$ffmpeg executable" : "$ffmpeg missing or not executable")) ]);
+        $html .= &ui_columns_row([ 'ffmpeg stderr log', &html_escape((-e $ffmpeg_log ? $ffmpeg_log : "$ffmpeg_log not created yet")) ]);
+    }
+    else {
+        $html .= &ui_columns_row([ 'stunnel config', &html_escape(restreamconf_stunnel_config_path()) ]);
+        my @ports = restreamconf_enabled_rtmps_local_ports($data);
+        $html .= &ui_columns_row([ 'stunnel local ports', &html_escape(@ports ? join(', ', @ports) : '-') ]);
+    }
+    $html .= &ui_columns_end();
+
+    if (@rtmps) {
+        $html .= '<h4>Generated RTMPS forwarding targets</h4>';
+        $html .= &ui_columns_start([ 'Name', 'Generated action' ], 100);
+        my $rtmps_index = 0;
+        foreach my $entry (@rtmps) {
+            my ($stream, $parsed) = @{$entry};
+            my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
+            my $action;
+            if ($method eq 'ffmpeg') {
+                $action = 'ffmpeg copies rtmp://127.0.0.1:' . $incoming_port . '/$app/$name to ' . restreamconf_mask_secret_url($url);
+            }
+            else {
+                my $local_port = restreamconf_stream_local_port($rtmps_index++);
+                $action = "nginx pushes to rtmp://127.0.0.1:$local_port$parsed->{'path'}; stunnel connects to $parsed->{'host'}:$parsed->{'port'} with SNI";
+            }
+            $html .= &ui_columns_row([ &html_escape($stream->{'name'} || $stream->{'id'} || 'stream'), &html_escape($action) ]);
+        }
+        $html .= &ui_columns_end();
+    }
+
+    if ($method eq 'ffmpeg') {
+        my $tail = restreamconf_file_tail($ffmpeg_log, 60);
+        $html .= '<h4>Recent ffmpeg RTMPS log</h4>';
+        $html .= $tail ? '<pre style="white-space: pre-wrap">' . &html_escape($tail) . '</pre>' : '<p>No ffmpeg log output yet. If this stays empty while streaming, nginx is not starting the RTMPS ffmpeg command.</p>';
+    }
+
+    return $html;
+}
+
 sub restreamconf_service_active {
     my ($service) = @_;
     my $status = `systemctl is-active $service 2>/dev/null`;

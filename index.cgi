@@ -37,6 +37,6 @@ print &ui_form_end([ [ 'save', 'Save' ], [ 'apply', 'Save and apply' ] ]);
 
 print '<h3>Monitoring</h3>';
 print restreamconf_render_status_table($data);
-print '<p><a href="dashboard.cgi">Open standalone monitoring view</a></p>';
+print '<p><a href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs, generated RTMPS actions, and ffmpeg log output.</p>';
 
 &ui_print_footer('', '');

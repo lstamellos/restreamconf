@@ -73,7 +73,7 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 
 ## Monitoring
 
-The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The monitoring output lists:
+The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The dashboard diagnostics section checks whether nginx loads the generated RTMP config, whether the incoming port has listener PIDs, what RTMPS forwarding action is generated, whether ffmpeg is executable, and the recent ffmpeg RTMPS log tail. The monitoring output lists:
 
 - the incoming RTMP ingest endpoint with the configured hostname, port, and application path;
 - each active outgoing stream as active;
