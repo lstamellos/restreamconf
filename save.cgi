@@ -21,26 +21,42 @@ my $data = {
 };
 
 my %group_ids;
+my %pending_groups;
+my @pending_group_order;
 my $group_rows = int($in{'group_rows'} || 0);
 for (my $i = 0; $i < $group_rows; $i++) {
     my $name = $in{"group_name_$i"} || '';
     $name =~ s/^\s+|\s+$//g;
-    next if ($name eq '');
 
     my $id = $in{"group_id_$i"} || restreamconf_new_id('group', $i);
     $id =~ s/[^A-Za-z0-9_.-]/_/g;
-    next if ($group_ids{$id});
-    push(@{$data->{'groups'}}, {
+    next if ($pending_groups{$id});
+    $pending_groups{$id} = {
         id => $id,
         enabled => $in{"group_enabled_$i"} ? 1 : 0,
+        name => $name,
+        index => $i,
+    };
+    push(@pending_group_order, $id);
+
+    next if ($name eq '');
+    push(@{$data->{'groups'}}, {
+        id => $id,
+        enabled => $pending_groups{$id}->{'enabled'},
         name => $name,
     });
     $group_ids{$id} = 1;
 }
 
 if (!@{$data->{'groups'}}) {
-    push(@{$data->{'groups'}}, { id => restreamconf_default_group_id(), enabled => 1, name => 'Default group' });
-    $group_ids{restreamconf_default_group_id()} = 1;
+    my $default_id = $pending_group_order[0] || restreamconf_default_group_id();
+    my $default_group = $pending_groups{$default_id} || { id => $default_id, enabled => 1, name => 'Default group' };
+    push(@{$data->{'groups'}}, {
+        id => $default_group->{'id'},
+        enabled => $default_group->{'enabled'} ? 1 : 0,
+        name => $default_group->{'name'} || 'Default group',
+    });
+    $group_ids{$default_group->{'id'}} = 1;
 }
 
 my $fallback_group = $data->{'groups'}->[0]->{'id'};
@@ -67,6 +83,15 @@ for (my $i = 0; $i < $rows; $i++) {
 
     my $group_id = $in{"group_$i"} || $fallback_group;
     $group_id =~ s/[^A-Za-z0-9_.-]/_/g;
+    if (!$group_ids{$group_id} && $pending_groups{$group_id}) {
+        my $pending_group = $pending_groups{$group_id};
+        push(@{$data->{'groups'}}, {
+            id => $group_id,
+            enabled => $pending_group->{'enabled'} ? 1 : 0,
+            name => $pending_group->{'name'} || 'Group ' . ($pending_group->{'index'} + 1),
+        });
+        $group_ids{$group_id} = 1;
+    }
     $group_id = $fallback_group if (!$group_ids{$group_id});
 
     push(@{$data->{'streams'}}, {

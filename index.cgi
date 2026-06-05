@@ -8,7 +8,6 @@ my $data = restreamconf_read_config();
 my @groups = @{$data->{'groups'} || []};
 my @streams = @{$data->{'streams'} || []};
 my $group_rows = @groups + 2;
-my $stream_rows = @streams + 3;
 my @group_form_rows;
 for (my $i = 0; $i < $group_rows; $i++) {
     my $group = $groups[$i] || {};
@@ -17,7 +16,6 @@ for (my $i = 0; $i < $group_rows; $i++) {
         id => $id,
         enabled => defined($group->{'enabled'}) ? $group->{'enabled'} : 1,
         name => $group->{'name'} || '',
-        label => $group->{'name'} || 'New group ' . ($i + 1),
     });
 }
 
@@ -45,25 +43,52 @@ print &ui_hidden('group_rows', $group_rows);
 my @group_options = map { [ $_->{'id'}, $_->{'label'} ] } @group_form_rows;
 
 print '<h3>Outgoing streams</h3>';
-print '<p>Configure each RTMP or RTMPS destination separately and assign it to a group. RTMPS destinations are forwarded through module-owned stunnel4 TLS tunnels, while RTMP destinations are pushed directly by nginx.</p>';
-print '<table class="ui_table" width="100%">';
-print '<tr><th>Enabled</th><th>Group</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th></tr>';
+print '<p>Configure each group in its own accordion. A destination only pushes when both its group and its own row are enabled. RTMPS destinations are forwarded through module-owned stunnel4 TLS tunnels, while RTMP destinations are pushed directly by nginx.</p>';
 
-for (my $i = 0; $i < $stream_rows; $i++) {
-    my $stream = $streams[$i] || {};
-    my $id = $stream->{'id'} || restreamconf_new_id('stream', $i);
-    my $selected_group = $stream->{'group_id'} || ($group_options[0] ? $group_options[0]->[0] : restreamconf_default_group_id());
-    print '<tr>';
-    print '<td>' . &ui_hidden("id_$i", $id) . &ui_checkbox("enabled_$i", 1, '', $stream->{'enabled'}) . '</td>';
-    print '<td>' . &ui_select("group_$i", $selected_group, \@group_options) . '</td>';
-    print '<td>' . &ui_textbox("name_$i", $stream->{'name'} || '', 18) . '</td>';
-    print '<td>' . &ui_select("protocol_$i", $stream->{'protocol'} || 'rtmp', [ [ 'rtmp', 'RTMP' ], [ 'rtmps', 'RTMPS' ] ]) . '</td>';
-    print '<td>' . &ui_textbox("url_$i", $stream->{'url'} || '', 45) . '</td>';
-    print '<td>' . &ui_textbox("key_$i", $stream->{'key'} || '', 24) . '</td>';
-    print '</tr>';
+my %streams_by_group;
+foreach my $stream (@streams) {
+    my $group_id = $stream->{'group_id'} || ($group_form_rows[0] ? $group_form_rows[0]->{'id'} : restreamconf_default_group_id());
+    push(@{$streams_by_group{$group_id}}, $stream);
 }
-print '</table>';
-print &ui_hidden('rows', $stream_rows);
+
+my $stream_row = 0;
+for (my $group_index = 0; $group_index < $group_rows; $group_index++) {
+    my $group = $group_form_rows[$group_index];
+    my @group_streams = @{$streams_by_group{$group->{'id'}} || []};
+    my $group_stream_rows = @group_streams + 3;
+    my $summary_name = $group->{'name'} || 'New group ' . ($group_index + 1);
+    my $summary_state = $group->{'enabled'} ? 'enabled' : 'disabled';
+    my $details_attr = ($group_index < @groups || @group_streams) ? ' open' : '';
+
+    print '<details class="restreamconf_group"' . $details_attr . '>';
+    print '<summary><b>' . &html_escape($summary_name) . '</b> (' . $summary_state . ', ' . scalar(@group_streams) . ' configured streams)</summary>';
+    print '<table class="ui_table" width="100%">';
+    print '<tr><th>Group enabled</th><th>Group name</th></tr>';
+    print '<tr>';
+    print '<td>' . &ui_hidden("group_id_$group_index", $group->{'id'}) . &ui_checkbox("group_enabled_$group_index", 1, '', $group->{'enabled'}) . '</td>';
+    print '<td>' . &ui_textbox("group_name_$group_index", $group->{'name'}, 30) . '</td>';
+    print '</tr>';
+    print '</table>';
+
+    print '<table class="ui_table" width="100%">';
+    print '<tr><th>Enabled</th><th>Name</th><th>Protocol</th><th>Stream URL</th><th>Stream key</th></tr>';
+    for (my $i = 0; $i < $group_stream_rows; $i++) {
+        my $stream = $group_streams[$i] || {};
+        my $id = $stream->{'id'} || restreamconf_new_id('stream', $stream_row);
+        print '<tr>';
+        print '<td>' . &ui_hidden("id_$stream_row", $id) . &ui_hidden("group_$stream_row", $group->{'id'}) . &ui_checkbox("enabled_$stream_row", 1, '', $stream->{'enabled'}) . '</td>';
+        print '<td>' . &ui_textbox("name_$stream_row", $stream->{'name'} || '', 18) . '</td>';
+        print '<td>' . &ui_select("protocol_$stream_row", $stream->{'protocol'} || 'rtmp', [ [ 'rtmp', 'RTMP' ], [ 'rtmps', 'RTMPS' ] ]) . '</td>';
+        print '<td>' . &ui_textbox("url_$stream_row", $stream->{'url'} || '', 45) . '</td>';
+        print '<td>' . &ui_textbox("key_$stream_row", $stream->{'key'} || '', 24) . '</td>';
+        print '</tr>';
+        $stream_row++;
+    }
+    print '</table>';
+    print '</details>';
+}
+print &ui_hidden('group_rows', $group_rows);
+print &ui_hidden('rows', $stream_row);
 print &ui_form_end([ [ 'save', 'Save' ], [ 'apply', 'Save and apply' ] ]);
 
 print '<h3>Monitoring</h3>';

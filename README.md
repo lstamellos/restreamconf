@@ -7,7 +7,7 @@ A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and mult
 - Provides a Virtualmin/Webmin configuration page for:
   - one public incoming RTMP hostname and one listening port, configured independently from outgoing destinations;
   - multiple outgoing RTMP or RTMPS stream entries;
-  - outgoing stream groups that can be enabled or disabled together;
+  - outgoing stream groups displayed as accordions that can be enabled or disabled together;
   - per-entry enable/disable state within each group;
   - stream URLs with explicit ports when needed;
   - separate stream keys, which are appended to the URL only when provided.
