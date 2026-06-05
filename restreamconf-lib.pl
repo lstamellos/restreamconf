@@ -94,19 +94,44 @@ sub restreamconf_write_config {
 
 sub restreamconf_valid_port {
     my ($port) = @_;
-    return ($port =~ /^\d+$/ && $port >= 1 && $port <= 65535);
+    return (defined($port) && $port =~ /^\d+$/ && $port >= 1 && $port <= 65535);
 }
 
 sub restreamconf_valid_host {
     my ($host) = @_;
-    return ($host =~ /^[A-Za-z0-9_.-]+$/);
+    return (defined($host) && $host =~ /^[A-Za-z0-9_.-]+$/);
+}
+
+sub restreamconf_valid_application {
+    my ($app) = @_;
+    return (defined($app) && $app =~ /^[A-Za-z0-9_-]+$/);
+}
+
+sub restreamconf_application {
+    my $app = $config{'application'} || 'live';
+    return restreamconf_valid_application($app) ? $app : 'live';
+}
+
+sub restreamconf_valid_service_name {
+    my ($service) = @_;
+    return (defined($service) && $service =~ /^[A-Za-z0-9_.@:-]+$/);
+}
+
+sub restreamconf_safe_service_name {
+    my ($service, $default) = @_;
+    return restreamconf_valid_service_name($service) ? $service : $default;
+}
+
+sub restreamconf_safe_local_host {
+    my $host = $config{'local_rtmp_host'} || '127.0.0.1';
+    return ($host =~ /^[A-Za-z0-9_.:-]+$/) ? $host : '127.0.0.1';
 }
 
 sub restreamconf_incoming_endpoint {
     my ($data) = @_;
     my $host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
-    my $app = $config{'application'} || 'live';
+    my $app = restreamconf_application();
     return "rtmp://$host:$port/$app";
 }
 
@@ -141,12 +166,6 @@ sub restreamconf_stream_local_port {
     return $base_port + int($index);
 }
 
-sub restreamconf_enabled_streams {
-    my ($data) = @_;
-    return grep { $_->{'enabled'} && $_->{'url'} } @{$data->{'streams'} || []};
-}
-
-
 sub restreamconf_enabled_rtmps_streams {
     my ($data) = @_;
     my @streams;
@@ -180,21 +199,12 @@ sub restreamconf_nginx_listen_directives {
     return join('', @directives);
 }
 
-
-
-sub restreamconf_rtmps_delivery_method {
-    # Backward-compatible shim for older installed module code paths.
-    # RTMPS delivery is stunnel4-only; any previous rtmps_delivery config value is ignored.
-    return 'stunnel';
-}
-
 sub restreamconf_nginx_conf {
     my ($data) = @_;
-    my $app = $config{'application'} || 'live';
-    my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
+    my $app = restreamconf_application();
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
-    my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
+    my $local_host = restreamconf_safe_local_host();
     my $rtmps_index = 0;
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
@@ -214,19 +224,8 @@ sub restreamconf_nginx_conf {
         my $label = $stream->{'name'} || $stream->{'id'} || 'stream';
         $label =~ s/[\r\n#]/ /g;
         if ($parsed->{'protocol'} eq 'rtmps') {
-            if (restreamconf_rtmps_delivery_method() eq 'stunnel') {
-                my $local_port = restreamconf_stream_local_port($rtmps_index++);
-                $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
-            }
-            else {
-                my $source = "rtmp://$local_host:$incoming_port/\$app";
-                my $ffmpeg = restreamconf_nginx_quote_arg(restreamconf_ffmpeg_path(), 0);
-                my $source_arg = restreamconf_nginx_quote_arg($source, 1);
-                my $output_arg = restreamconf_nginx_quote_arg($url, 0);
-                my $log_path = restreamconf_ffmpeg_log_path();
-                $log_path =~ s/[\r\n;]//g;
-                $conf .= "            exec $ffmpeg -nostdin -loglevel warning -i $source_arg -c copy -f flv $output_arg 2>>$log_path; # $label via ffmpeg RTMPS\n";
-            }
+            my $local_port = restreamconf_stream_local_port($rtmps_index++);
+            $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
         }
         else {
             $conf .= "            push $url; # $label\n";
@@ -241,8 +240,7 @@ sub restreamconf_nginx_conf {
 
 sub restreamconf_stunnel_conf {
     my ($data) = @_;
-    return undef if (restreamconf_rtmps_delivery_method() ne 'stunnel');
-    my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
+    my $local_host = restreamconf_safe_local_host();
     my $rtmps_index = 0;
     my @rtmps_streams = restreamconf_enabled_rtmps_streams($data);
     return undef if (!@rtmps_streams);
@@ -472,31 +470,22 @@ sub restreamconf_release_stunnel_ports {
     return sort { $a <=> $b } keys(%released);
 }
 
-sub restreamconf_restart_command {
-    my ($service) = @_;
-    return "systemctl restart " . quotemeta($service);
-}
-
 sub restreamconf_apply_services {
     my ($data) = @_;
     restreamconf_write_service_files($data);
     my @messages;
-    my $nginx_service = $config{'nginx_service'} || 'nginx';
-    my $stunnel_service = $config{'stunnel_service'} || 'stunnel4';
+    my $nginx_service = restreamconf_safe_service_name($config{'nginx_service'} || 'nginx', 'nginx');
+    my $stunnel_service = restreamconf_safe_service_name($config{'stunnel_service'} || 'stunnel4', 'stunnel4');
 
-    my $cmd = "systemctl restart " . quotemeta($nginx_service) . " 2>&1";
-    my $out = `$cmd`;
-    push(@messages, "$nginx_service: " . ($? ? "restart failed - $out" : "restarted"));
+    my ($code, $out) = restreamconf_command_output('systemctl', 'restart', $nginx_service);
+    push(@messages, "$nginx_service: " . ($code ? "restart failed - $out" : "restarted"));
 
     if (restreamconf_enabled_rtmps_streams($data)) {
-        $cmd = "systemctl stop " . quotemeta($stunnel_service) . " 2>&1";
-        $out = `$cmd`;
-        $cmd = "systemctl kill -s KILL " . quotemeta($stunnel_service) . " 2>&1";
-        $out .= `$cmd`;
+        restreamconf_command_output('systemctl', 'stop', $stunnel_service);
+        restreamconf_command_output('systemctl', 'kill', '-s', 'KILL', $stunnel_service);
         my @released_ports = restreamconf_release_stunnel_ports($data);
-        $cmd = "systemctl start " . quotemeta($stunnel_service) . " 2>&1";
-        $out = `$cmd`;
-        my $result = $? ? "start failed - $out" : "started";
+        ($code, $out) = restreamconf_command_output('systemctl', 'start', $stunnel_service);
+        my $result = $code ? "start failed - $out" : "started";
         $result .= "; released stale listeners on ports " . join(', ', @released_ports) if (@released_ports);
         push(@messages, "$stunnel_service: $result");
     }
@@ -509,9 +498,23 @@ sub restreamconf_apply_services {
 
 
 sub restreamconf_command_output {
-    my ($cmd) = @_;
-    my $out = `$cmd 2>&1`;
-    my $code = $? >> 8;
+    my (@cmd) = @_;
+    return (127, 'no command specified') if (!@cmd);
+
+    my $pid = open(my $fh, '-|');
+    return (127, "failed to fork for $cmd[0]: $!") if (!defined($pid));
+    if ($pid == 0) {
+        open(STDERR, '>&', STDOUT);
+        exec @cmd;
+        print "exec failed for $cmd[0]: $!\n";
+        exit 127;
+    }
+
+    my $out = do { local $/; <$fh> };
+    close($fh);
+    my $status = $?;
+    my $code = $status == -1 ? 127 : (($status & 127) ? 128 + ($status & 127) : ($status >> 8));
+    $out = '' if (!defined($out));
     chomp($out);
     return ($code, $out);
 }
@@ -533,8 +536,9 @@ sub restreamconf_render_diagnostics {
     my @incoming_pids = restreamconf_listening_pids_for_port($incoming_port);
     my @rtmps = restreamconf_enabled_rtmps_streams($data);
     my @ports = restreamconf_enabled_rtmps_local_ports($data);
+    my $local_host = restreamconf_safe_local_host();
     my $stunnel_path = restreamconf_stunnel_config_path();
-    my ($nginx_test_code, $nginx_test_out) = restreamconf_command_output('nginx -t');
+    my ($nginx_test_code, $nginx_test_out) = restreamconf_command_output('nginx', '-t');
 
     my $html = '<h3>Diagnostics</h3>';
     $html .= '<p>Use this section to locate where stunnel RTMPS forwarding stops: nginx config loading, incoming listener, local RTMP push target generation, stunnel configuration, or stunnel listener ports.</p>';
@@ -556,7 +560,7 @@ sub restreamconf_render_diagnostics {
         foreach my $entry (@rtmps) {
             my ($stream, $parsed) = @{$entry};
             my $local_port = restreamconf_stream_local_port($rtmps_index++);
-            my $action = "nginx pushes to rtmp://127.0.0.1:$local_port$parsed->{'path'}; stunnel connects to $parsed->{'host'}:$parsed->{'port'} with SNI";
+            my $action = "nginx pushes to rtmp://$local_host:$local_port$parsed->{'path'}; stunnel connects to $parsed->{'host'}:$parsed->{'port'} with SNI";
             $html .= &ui_columns_row([ &html_escape($stream->{'name'} || $stream->{'id'} || 'stream'), &html_escape($action) ]);
         }
         $html .= &ui_columns_end();
@@ -567,8 +571,9 @@ sub restreamconf_render_diagnostics {
 
 sub restreamconf_service_active {
     my ($service) = @_;
-    my $status = `systemctl is-active $service 2>/dev/null`;
-    chomp($status);
+    $service = restreamconf_safe_service_name($service, '');
+    return 'unknown' if ($service eq '');
+    my (undef, $status) = restreamconf_command_output('systemctl', 'is-active', $service);
     return $status || 'unknown';
 }
 
