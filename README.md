@@ -47,6 +47,8 @@ This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP 
 
 The generated RTMP server listens on the configured port on all interfaces, while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address.
 
+The generated RTMP server listens on the configured port on all interfaces, while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address.
+
 ## RTMPS handling
 
 nginx RTMP pushes plain RTMP. For RTMPS destinations, this module creates one local stunnel4 client listener per enabled RTMPS output:

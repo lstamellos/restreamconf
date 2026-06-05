@@ -171,6 +171,7 @@ sub restreamconf_remove_generated_file {
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     my $app = $config{'application'} || 'live';
+    my $incoming_host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
     my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $local_host = $config{'local_rtmp_host'} || '127.0.0.1';
     my $rtmps_index = 0;
@@ -178,7 +179,7 @@ sub restreamconf_nginx_conf {
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
                "rtmp {\n" .
                "    server {\n" .
-               "        listen $incoming_port;\n" .
+               "        listen $incoming_host:$incoming_port;\n" .
                "        chunk_size 4096;\n\n" .
                "        application $app {\n" .
                "            live on;\n" .
