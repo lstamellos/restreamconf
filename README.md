@@ -55,7 +55,7 @@ nginx RTMP pushes plain RTMP directly. For RTMPS destinations, this module creat
 
 When applying enabled RTMPS outputs, the module stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes. Inactive RTMPS outputs, including outputs inside disabled groups, are saved but do not receive nginx push directives or stunnel4 service entries until both their group and their individual row are re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
 
-On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header.
+On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header. The generated snippet intentionally does not set `pid =`; the package-managed top-level `stunnel4` service must keep ownership of its daemon pid file so service restarts stop the old listener before binding the same local tunnel ports again.
 
 ## Installation
 

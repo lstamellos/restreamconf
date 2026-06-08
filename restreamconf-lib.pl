@@ -338,8 +338,9 @@ sub restreamconf_stunnel_conf {
     return undef if (!@rtmps_streams);
 
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
-               "foreground = no\n" .
-               "pid = /run/stunnel4/restreamconf.pid\n\n";
+               "# Do not set a pid file in this included snippet; the Debian/Ubuntu\n" .
+               "# stunnel4 service owns the top-level daemon pid file.\n" .
+               "foreground = no\n\n";
 
     foreach my $entry (@rtmps_streams) {
         my ($stream, $parsed) = @{$entry};
