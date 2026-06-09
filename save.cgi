@@ -5,20 +5,47 @@ require './restreamconf-lib.pl';
 &ReadParse();
 &ui_print_header(undef, $text{'save_title'} || 'Save Restream Configuration', '', undef, 1, 1);
 
-my $incoming_host = $in{'incoming_host'} || '';
-$incoming_host =~ s/^\s+|\s+$//g;
-&error('Public incoming stream hostname is required') if ($incoming_host eq '');
-&error('Public incoming stream hostname contains unsupported characters') if (!restreamconf_valid_host($incoming_host));
-
-my $incoming_port = $in{'incoming_port'};
-&error('Incoming stream port must be between 1 and 65535') if (!restreamconf_valid_port($incoming_port));
-
 my $data = {
-    incoming_host => $incoming_host,
-    incoming_port => int($incoming_port),
+    inputs => [],
     groups => [],
     streams => [],
 };
+
+my %input_ids;
+my %input_ports;
+my $input_rows = int($in{'input_rows'} || 0);
+for (my $i = 0; $i < $input_rows; $i++) {
+    my $name = $in{"input_name_$i"} || '';
+    my $incoming_host = $in{"input_host_$i"} || '';
+    my $incoming_port = $in{"input_port_$i"};
+    $name =~ s/^\s+|\s+$//g;
+    $incoming_host =~ s/^\s+|\s+$//g;
+    next if ($name eq '' && $incoming_host eq '' && (!defined($incoming_port) || $incoming_port eq ''));
+
+    &error('Public incoming stream hostname is required for input ' . ($i + 1)) if ($incoming_host eq '');
+    &error('Public incoming stream hostname contains unsupported characters for input ' . ($i + 1)) if (!restreamconf_valid_host($incoming_host));
+    &error('Incoming stream port must be between 1 and 65535 for input ' . ($i + 1)) if (!restreamconf_valid_port($incoming_port));
+    &error('Incoming stream port ' . int($incoming_port) . ' is used by more than one input') if ($input_ports{int($incoming_port)});
+
+    my $id = $in{"input_id_$i"} || restreamconf_new_id('input', $i);
+    $id =~ s/[^A-Za-z0-9_.-]/_/g;
+    next if ($input_ids{$id});
+    push(@{$data->{'inputs'}}, {
+        id => $id,
+        name => $name || 'Input ' . ($i + 1),
+        incoming_host => $incoming_host,
+        incoming_port => int($incoming_port),
+    });
+    $input_ids{$id} = 1;
+    $input_ports{int($incoming_port)} = 1;
+}
+
+if (!@{$data->{'inputs'}}) {
+    &error('At least one incoming stream input is required');
+}
+$data->{'incoming_host'} = $data->{'inputs'}->[0]->{'incoming_host'};
+$data->{'incoming_port'} = $data->{'inputs'}->[0]->{'incoming_port'};
+my $fallback_input = $data->{'inputs'}->[0]->{'id'};
 
 my %group_ids;
 my %pending_groups;
@@ -94,6 +121,10 @@ for (my $i = 0; $i < $rows; $i++) {
     }
     $group_id = $fallback_group if (!$group_ids{$group_id});
 
+    my $input_id = $in{"input_$i"} || $fallback_input;
+    $input_id =~ s/[^A-Za-z0-9_.-]/_/g;
+    $input_id = $fallback_input if (!$input_ids{$input_id});
+
     push(@{$data->{'streams'}}, {
         id => $in{"id_$i"} || restreamconf_new_id('stream', $i),
         enabled => $in{"enabled_$i"} ? 1 : 0,
@@ -102,6 +133,7 @@ for (my $i = 0; $i < $rows; $i++) {
         url => $url,
         key => $key,
         group_id => $group_id,
+        input_id => $input_id,
     });
 }
 

@@ -1,17 +1,17 @@
 # restreamconf
 
-A Webmin/Virtualmin GPL module for configuring one incoming RTMP ingest and multiple outgoing RTMP/RTMPS restream destinations.
+A Webmin/Virtualmin GPL module for configuring multiple incoming RTMP ingest ports and multiple outgoing RTMP/RTMPS restream destinations.
 
 ## What the module does
 
 - Provides a Virtualmin/Webmin configuration page for:
-  - one public incoming RTMP hostname and one listening port, configured independently from outgoing destinations;
+  - multiple public incoming RTMP ingest points, each with its own configurable listening port;
   - multiple outgoing RTMP or RTMPS stream entries;
   - outgoing stream groups displayed as accordions that can be enabled or disabled together;
   - per-entry enable/disable state within each group;
   - stream URLs with explicit ports when needed;
   - separate stream keys, which are appended to the URL only when provided.
-- Generates a module-owned nginx RTMP configuration file without editing existing nginx configuration files.
+- Writes a generated nginx RTMP configuration file with one listener per configured incoming input port.
 - Forwards enabled RTMPS destinations through module-owned stunnel4 TLS tunnels.
 - Adds Virtualmin integration hooks for:
   - a System Settings link;
@@ -27,7 +27,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | `nginx_conf` | `/etc/nginx/restreamconf/rtmp.conf` | Generated nginx RTMP config |
 | `nginx_main_conf` | `/etc/nginx/nginx.conf` | Main nginx config where the module installs the RTMP include |
 | `manage_nginx_include` | `1` | Automatically include the generated RTMP config from the main nginx config |
-| `incoming_host` | system hostname | Public hostname shown in the incoming RTMP ingest URL for OBS or other encoders |
+| `incoming_host` | system hostname | Default public hostname used for the first incoming RTMP input and legacy configuration |
 | `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
 | `local_rtmps_base_port` | `19350` | First localhost port used for RTMPS tunnel targets; legacy saved value `31935` is treated as `19350` |
@@ -47,7 +47,13 @@ http {
 
 This keeps normal Virtualmin/nginx web hosting configuration separate from RTMP restreaming while still ensuring nginx actually loads the RTMP listener. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
 
-The generated RTMP server listens on the configured port on IPv4 (`0.0.0.0`) and, by default, IPv6 (`[::]`), while `incoming_host` is the public hostname shown in monitoring and encoder settings. Keeping those separate avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address, and the IPv6 listener prevents OBS from getting `ECONNREFUSED` when the hostname resolves to an AAAA record first.
+The generated RTMP configuration creates one server listener for each configured incoming input. Each input has its own public hostname label and unique RTMP port, while all inputs use the configured application name. Every listener binds on IPv4 (`0.0.0.0`) and, by default, IPv6 (`[::]`). Keeping the public hostname label separate from the bind address avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address, and the IPv6 listener prevents OBS from getting `ECONNREFUSED` when the hostname resolves to an AAAA record first. Outgoing destinations include an input selector so each restream can choose which incoming port feeds it.
+
+## Multiple incoming inputs
+
+The Incoming tab can define multiple RTMP ingest points. Each input stores a name, public hostname, and unique port. The first input is also written to the legacy `incoming_host` and `incoming_port` keys for backward compatibility, while all inputs are stored as `input=` records in the module stream database.
+
+Each outgoing stream row has an **Input** selector. When service files are generated, nginx creates one RTMP `server` block per input port and only emits `push` directives for destinations assigned to that input. This lets one module instance accept multiple independent OBS ingest URLs and restream each one to a different set of destinations.
 
 ## RTMPS handling
 
@@ -71,7 +77,7 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 
 The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The dashboard diagnostics section checks whether nginx loads the generated RTMP config, whether the incoming port has listener PIDs, what stunnel4 RTMPS forwarding action is generated, and which local tunnel ports are used. The monitoring output lists:
 
-- the incoming RTMP ingest endpoint with the configured hostname, port, and application path;
+- every incoming RTMP ingest endpoint with its configured hostname, unique port, and application path;
 - each outgoing stream group as enabled or disabled;
 - each active outgoing stream as active;
 - each individually disabled or group-disabled outgoing stream as inactive;
