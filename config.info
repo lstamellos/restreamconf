@@ -1,12 +1,16 @@
 streams_file=Stream database file,0
-nginx_conf=Generated nginx RTMP configuration file,0
-nginx_main_conf=Main nginx configuration file where the RTMP include is installed,0
-manage_nginx_include=Automatically include generated RTMP config in main nginx config (1=yes, 0=no),0
+nginx_conf=Generated isolated nginx RTMP configuration file,0
+nginx_main_conf=Deprecated compatibility setting; the module no longer writes to the host nginx config,0
+manage_nginx_include=Deprecated compatibility setting; host nginx includes are always disabled,0
+nginx_isolated=Compatibility setting; restreaming always runs in its own standalone nginx master,0
+nginx_pid=PID file for the isolated restream nginx master,0
+nginx_prefix=Working prefix directory for the isolated restream nginx master,0
+nginx_error_log=Error log for the isolated restream nginx master,0
 incoming_host=Default public incoming RTMP hostname shown to OBS,0
 listen_ipv6=Also listen for incoming RTMP over IPv6 (1=yes, 0=no),0
 stunnel_conf=Generated stunnel4 configuration file,0
 stunnel_service=stunnel4 systemd service name,0
-nginx_service=nginx systemd service name,0
+nginx_service=Deprecated compatibility setting; host nginx.service is never restarted or reloaded,0
 local_rtmp_host=Local RTMPS tunnel bind host,0
 local_rtmps_base_port=First local RTMPS tunnel port,0
 application=Incoming nginx RTMP application name,0
