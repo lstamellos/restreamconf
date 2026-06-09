@@ -194,6 +194,7 @@ print '</section>';
 print '<section class="rc-tab-panel" role="tabpanel" id="rc-panel-monitoring" aria-labelledby="rc-tab-monitoring">';
 print '<div class="rc-section-title"><h3>📊 Monitoring</h3></div>';
 print restreamconf_render_status_table($data);
+print restreamconf_monitor_assets();
 print '<p><a class="rc-monitor-link" href="dashboard.cgi">Open standalone monitoring view</a>. Diagnostics include nginx config/include checks, listener PIDs for every input, generated stunnel4 actions, and tunnel ports.</p>';
 print '</section>';
 
