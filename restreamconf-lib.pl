@@ -3,7 +3,6 @@
 BEGIN { push(@INC, '..'); };
 use WebminCore;
 use Sys::Hostname qw(hostname);
-use Socket qw(inet_aton inet_ntoa);
 
 init_config();
 our $module_config_directory ||= $config_directory;
@@ -873,235 +872,6 @@ sub restreamconf_render_diagnostics {
     return $html;
 }
 
-
-sub restreamconf_json_escape {
-    my ($value) = @_;
-    $value = '' if (!defined($value));
-    $value =~ s/\\/\\\\/g;
-    $value =~ s/"/\\"/g;
-    $value =~ s/\r/\\r/g;
-    $value =~ s/\n/\\n/g;
-    $value =~ s/\t/\\t/g;
-    $value =~ s/([\x00-\x1f])/sprintf('\\u%04x', ord($1))/eg;
-    return '"' . $value . '"';
-}
-
-sub restreamconf_json_value {
-    my ($value) = @_;
-    return 'null' if (!defined($value));
-    return $value if ($value =~ /^-?\d+(?:\.\d+)?$/);
-    return restreamconf_json_escape($value);
-}
-
-sub restreamconf_json_object {
-    my ($hash) = @_;
-    return '{' . join(',', map { restreamconf_json_escape($_) . ':' . restreamconf_json_value($hash->{$_}) } sort keys(%{$hash || {}})) . '}';
-}
-
-sub restreamconf_read_metrics_state {
-    my $path = "$module_config_directory/metrics-state.conf";
-    my %state;
-    return %state if (!-r $path);
-    open(my $fh, '<', $path) || return %state;
-    while (my $line = <$fh>) {
-        chomp($line);
-        my ($key, $first_seen, $last_seen, $last_bytes) = split(/\|/, $line, 4);
-        next if (!defined($key) || $key eq '');
-        $state{$key} = {
-            first_seen => int($first_seen || 0),
-            last_seen => int($last_seen || 0),
-            last_bytes => int($last_bytes || 0),
-        };
-    }
-    close($fh);
-    return %state;
-}
-
-sub restreamconf_write_metrics_state {
-    my (%state) = @_;
-    my $path = "$module_config_directory/metrics-state.conf";
-    make_dir($module_config_directory, 0700) if ($module_config_directory && !-d $module_config_directory);
-    open(my $fh, '>', $path) || return 0;
-    foreach my $key (sort keys(%state)) {
-        next if ($key =~ /[\r\n|]/);
-        my $entry = $state{$key} || {};
-        print $fh join('|', $key, int($entry->{'first_seen'} || 0), int($entry->{'last_seen'} || 0), int($entry->{'last_bytes'} || 0)) . "\n";
-    }
-    close($fh);
-    chmod(0600, $path);
-    return 1;
-}
-
-sub restreamconf_parse_socket_endpoint {
-    my ($endpoint) = @_;
-    return ('', 0) if (!defined($endpoint));
-    $endpoint =~ s/^\[//;
-    $endpoint =~ s/\](:\d+)$/$1/;
-    return ($1, int($2)) if ($endpoint =~ /^(.+):(\d+)$/);
-    return ('', 0);
-}
-
-sub restreamconf_host_addresses {
-    my ($host) = @_;
-    my %addresses;
-    return %addresses if (!defined($host) || $host eq '');
-    $addresses{$host} = 1;
-    if ($host =~ /^\d+\.\d+\.\d+\.\d+$/) {
-        return %addresses;
-    }
-    my $packed = inet_aton($host);
-    $addresses{inet_ntoa($packed)} = 1 if ($packed);
-    return %addresses;
-}
-
-sub restreamconf_socket_records {
-    my (undef, $out) = restreamconf_command_output('ss', '-H', '-tinp');
-    my @records;
-    my $current = '';
-    foreach my $line (split(/\n/, $out || '')) {
-        if ($line =~ /^(?:ESTAB|SYN-SENT|SYN-RECV|FIN-WAIT|TIME-WAIT|CLOSE-WAIT|LAST-ACK|CLOSING)\s/) {
-            push(@records, $current) if ($current ne '');
-            $current = $line;
-        }
-        else {
-            $current .= "\n$line" if ($current ne '');
-        }
-    }
-    push(@records, $current) if ($current ne '');
-
-    my @sockets;
-    foreach my $record (@records) {
-        my ($first) = split(/\n/, $record, 2);
-        my @fields = split(' ', $first);
-        next if (@fields < 5);
-        my ($local_host, $local_port) = restreamconf_parse_socket_endpoint($fields[3]);
-        my ($peer_host, $peer_port) = restreamconf_parse_socket_endpoint($fields[4]);
-        next if (!$local_port || !$peer_port);
-        my ($bytes_sent) = $record =~ /bytes_sent:(\d+)/;
-        my ($bytes_received) = $record =~ /bytes_received:(\d+)/;
-        push(@sockets, {
-            local_host => $local_host,
-            local_port => $local_port,
-            peer_host => $peer_host,
-            peer_port => $peer_port,
-            bytes_sent => defined($bytes_sent) ? int($bytes_sent) : undef,
-            bytes_received => defined($bytes_received) ? int($bytes_received) : undef,
-        });
-    }
-    return @sockets;
-}
-
-sub restreamconf_stream_metrics_payload {
-    my ($data) = @_;
-    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
-    my $now = time();
-    my @sockets = restreamconf_socket_records();
-    my %previous = restreamconf_read_metrics_state();
-    my %next_state;
-    my @items;
-    my $total_out_bps;
-    my $total_out_bytes;
-
-    foreach my $input (@{$data->{'inputs'} || []}) {
-        my $port = int($input->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
-        my $bytes;
-        my $active = 0;
-        foreach my $socket (@sockets) {
-            next if ($socket->{'local_port'} != $port);
-            $active = 1;
-            $bytes += $socket->{'bytes_received'} if (defined($socket->{'bytes_received'}));
-        }
-        my $key = 'incoming:' . ($input->{'id'} || $port);
-        my ($bitrate_bps, $duration) = restreamconf_update_metric_state($key, $active, $bytes, $now, \%previous, \%next_state);
-        push(@items, {
-            id => $key,
-            type => 'Incoming',
-            name => $input->{'name'} || $input->{'id'} || 'RTMP ingest',
-            status => $active ? 'receiving' : 'idle',
-            endpoint => restreamconf_incoming_endpoint($data, $input),
-            bitrate_bps => $bitrate_bps,
-            duration_seconds => $duration,
-            bytes_total => $bytes,
-        });
-    }
-
-    foreach my $group (@{$data->{'groups'} || []}) {
-        foreach my $stream (@{$data->{'streams'} || []}) {
-            next if (($stream->{'group_id'} || restreamconf_default_group_id()) ne $group->{'id'});
-            my $configured_active = restreamconf_stream_active($data, $stream) ? 1 : 0;
-            my $url = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
-            my $parsed = restreamconf_parse_rtmp_url($url);
-            my $bytes;
-            my $socket_active = 0;
-            if ($configured_active && $parsed) {
-                my %hosts = restreamconf_host_addresses($parsed->{'host'});
-                foreach my $socket (@sockets) {
-                    next if ($socket->{'peer_port'} != int($parsed->{'port'}));
-                    next if (!$hosts{$socket->{'peer_host'}});
-                    $socket_active = 1;
-                    $bytes += $socket->{'bytes_sent'} if (defined($socket->{'bytes_sent'}));
-                }
-            }
-            my $active = $configured_active && $socket_active;
-            my $key = 'outgoing:' . ($stream->{'id'} || $url);
-            my ($bitrate_bps, $duration) = restreamconf_update_metric_state($key, $active, $bytes, $now, \%previous, \%next_state);
-            $total_out_bps += $bitrate_bps if (defined($bitrate_bps));
-            $total_out_bytes += $bytes if (defined($bytes));
-            my $input = restreamconf_stream_input($data, $stream);
-            my $state = $active ? 'streaming' : ($configured_active ? 'waiting for connection' : ($stream->{'enabled'} ? 'inactive (group disabled)' : 'inactive'));
-            push(@items, {
-                id => $key,
-                type => 'Outgoing',
-                name => $stream->{'name'} || $stream->{'id'} || 'stream',
-                status => $state . ' from ' . ($input->{'name'} || $input->{'id'} || 'input'),
-                endpoint => $url || '-',
-                bitrate_bps => $bitrate_bps,
-                duration_seconds => $duration,
-                bytes_total => $bytes,
-            });
-        }
-    }
-
-    restreamconf_write_metrics_state(%next_state);
-    return {
-        generated_at => $now,
-        total_out_bps => $total_out_bps,
-        total_out_bytes => $total_out_bytes,
-        items => \@items,
-    };
-}
-
-sub restreamconf_update_metric_state {
-    my ($key, $active, $bytes, $now, $previous, $next_state) = @_;
-    return (undef, 0) if (!$active);
-    my $prior = $previous->{$key};
-    my $first_seen = $prior ? int($prior->{'first_seen'} || $now) : $now;
-    my $last_seen = $prior ? int($prior->{'last_seen'} || 0) : 0;
-    my $last_bytes = $prior ? int($prior->{'last_bytes'} || 0) : 0;
-    my $bitrate_bps;
-    if (defined($bytes) && $last_seen && $now > $last_seen && $bytes >= $last_bytes) {
-        $bitrate_bps = ($bytes - $last_bytes) / ($now - $last_seen);
-    }
-    $next_state->{$key} = {
-        first_seen => $first_seen,
-        last_seen => $now,
-        last_bytes => defined($bytes) ? int($bytes) : $last_bytes,
-    };
-    return ($bitrate_bps, $now - $first_seen);
-}
-
-sub restreamconf_metrics_json {
-    my ($data) = @_;
-    my $payload = restreamconf_stream_metrics_payload($data);
-    my @items_json = map { restreamconf_json_object($_) } @{$payload->{'items'} || []};
-    return '{' .
-        '"generated_at":' . int($payload->{'generated_at'} || time()) . ',' .
-        '"total_out_bps":' . (defined($payload->{'total_out_bps'}) ? $payload->{'total_out_bps'} : 'null') . ',' .
-        '"total_out_bytes":' . (defined($payload->{'total_out_bytes'}) ? int($payload->{'total_out_bytes'}) : 'null') . ',' .
-        '"items":[' . join(',', @items_json) . ']' .
-        '}';
-}
-
 sub restreamconf_service_active {
     my ($service) = @_;
     $service = restreamconf_safe_service_name($service, '');
@@ -1113,56 +883,24 @@ sub restreamconf_service_active {
 sub restreamconf_render_status_table {
     my ($data) = @_;
     $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
-    my $payload = restreamconf_stream_metrics_payload($data);
-    my $html = '<div class="rc-monitor" data-restream-monitor="1" data-endpoint="/restreamconf/dashboard.cgi?metrics=1">';
-    $html .= '<div class="rc-monitor-summary"><b>Total streaming bandwidth consumed:</b> <span data-total-bandwidth>Calculating...</span> <span class="rc-monitor-note">(updates every 1 second)</span></div>';
-    $html .= '<table class="ui_table rc-monitor-table"><thead><tr><th>Type</th><th>Name</th><th>Status</th><th>Endpoint</th><th>Bitrate</th><th>Duration</th></tr></thead><tbody>';
-    foreach my $item (@{$payload->{'items'} || []}) {
-        $html .= '<tr data-stream-id="' . &html_escape($item->{'id'}) . '">' .
-            '<td data-field="type">' . &html_escape($item->{'type'}) . '</td>' .
-            '<td data-field="name">' . &html_escape($item->{'name'}) . '</td>' .
-            '<td data-field="status">' . &html_escape($item->{'status'}) . '</td>' .
-            '<td data-field="endpoint">' . &html_escape($item->{'endpoint'}) . '</td>' .
-            '<td data-field="bitrate">Calculating...</td>' .
-            '<td data-field="duration">-</td>' .
-            '</tr>';
+    my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        $html .= &ui_columns_row([ 'Incoming', &html_escape($input->{'name'} || $input->{'id'} || 'RTMP ingest'), 'public ingest endpoint', &html_escape(restreamconf_incoming_endpoint($data, $input)) ]);
     }
-    $html .= '</tbody></table></div>';
+    foreach my $group (@{$data->{'groups'} || []}) {
+        my $group_state = $group->{'enabled'} ? 'enabled' : 'disabled';
+        $html .= &ui_columns_row([ 'Outgoing group', &html_escape($group->{'name'} || $group->{'id'}), $group_state, '-' ]);
+        foreach my $stream (@{$data->{'streams'} || []}) {
+            next if (($stream->{'group_id'} || restreamconf_default_group_id()) ne $group->{'id'});
+            my $state = restreamconf_stream_active($data, $stream) ? 'active' : ($stream->{'enabled'} ? 'inactive (group disabled)' : 'inactive');
+            my $input = restreamconf_stream_input($data, $stream);
+            my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
+            my $input_name = $input->{'name'} || $input->{'id'} || 'input';
+            $html .= &ui_columns_row([ 'Outgoing', '&nbsp;&nbsp;' . &html_escape($stream->{'name'} || $stream->{'id'}), $state . ' from ' . &html_escape($input_name), &html_escape($endpoint || '-') ]);
+        }
+    }
+    $html .= &ui_columns_end();
     return $html;
-}
-
-sub restreamconf_monitor_assets {
-    return <<'ASSETS';
-<style>
-.rc-monitor-summary { margin: .5em 0 1em; }
-.rc-monitor-note { color: #666; font-size: .9em; margin-left: .5em; }
-.rc-monitor-table td, .rc-monitor-table th { vertical-align: top; }
-</style>
-<script>
-(function() {
-  function formatBitrate(value) { return value === null || value === undefined ? 'waiting for data' : (value / 1048576).toFixed(2) + ' MB/s'; }
-  function formatDuration(seconds) { seconds = Number(seconds || 0); if (!seconds) return '-'; var h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = Math.floor(seconds % 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s).padStart(2, '0'); }
-  function updateMonitor(root, payload) {
-    var total = root.querySelector('[data-total-bandwidth]');
-    if (total) total.textContent = formatBitrate(payload.total_out_bps) + ' outbound';
-    (payload.items || []).forEach(function(item) {
-      var safeId = window.CSS && CSS.escape ? CSS.escape(item.id) : String(item.id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      var row = root.querySelector('[data-stream-id="' + safeId + '"]');
-      if (!row) return;
-      ['type', 'name', 'status', 'endpoint'].forEach(function(field) { var cell = row.querySelector('[data-field="' + field + '"]'); if (cell) cell.textContent = item[field] || '-'; });
-      var bitrate = row.querySelector('[data-field="bitrate"]'); if (bitrate) bitrate.textContent = formatBitrate(item.bitrate_bps);
-      var duration = row.querySelector('[data-field="duration"]'); if (duration) duration.textContent = formatDuration(item.duration_seconds);
-    });
-  }
-  function start(root) {
-    var endpoint = root.getAttribute('data-endpoint') || '/restreamconf/dashboard.cgi?metrics=1';
-    function poll() { fetch(endpoint, { cache: 'no-store' }).then(function(r) { return r.json(); }).then(function(payload) { updateMonitor(root, payload); }).catch(function() {}); }
-    poll(); setInterval(poll, 1000);
-  }
-  document.querySelectorAll('[data-restream-monitor]').forEach(start);
-})();
-</script>
-ASSETS
 }
 
 1;

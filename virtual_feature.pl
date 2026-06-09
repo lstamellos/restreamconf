@@ -38,7 +38,6 @@ sub theme_sections
     my $html = '<div><b>nginx:</b> ' . &html_escape($nginx) .
                ' &nbsp; <b>stunnel4:</b> ' . &html_escape($stunnel) . '</div>';
     $html .= restreamconf_render_status_table($data);
-    $html .= restreamconf_monitor_assets();
     $html .= '<p><a href="/restreamconf/dashboard.cgi">View restream monitor</a></p>';
     return ( { 'title' => 'RTMP/RTMPS Restream Status',
                'html' => $html,
