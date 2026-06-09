@@ -392,15 +392,41 @@ sub restreamconf_nginx_listen_directives {
     return join('', @directives);
 }
 
+sub restreamconf_isolated_nginx {
+    return 1 if (!defined($config{'nginx_isolated'}) || $config{'nginx_isolated'} eq '');
+    return ($config{'nginx_isolated'} !~ /^(0|no|false)$/i);
+}
+
+sub restreamconf_nginx_pid_path {
+    my $pid_path = $config{'nginx_pid'} || '/run/restreamconf-nginx.pid';
+    return ($pid_path =~ m!^[A-Za-z0-9_./-]+$!) ? $pid_path : '/run/restreamconf-nginx.pid';
+}
+
 sub restreamconf_nginx_conf {
     my ($data) = @_;
     $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my $app = restreamconf_application();
     my $local_host = restreamconf_safe_local_host();
     my $rtmps_index = 0;
-    my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
-               "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
-               "rtmp {\n";
+    my $isolated = restreamconf_isolated_nginx();
+    my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n";
+
+    if ($isolated) {
+        my $pid_path = restreamconf_nginx_pid_path();
+        $conf .= "# Standalone RTMP-only nginx config. Do not include this file from the host web nginx config.\n" .
+                 "# This keeps Virtualmin and other website nginx configuration files untouched.\n" .
+                 "include /etc/nginx/modules-enabled/*.conf;\n" .
+                 "worker_processes 1;\n" .
+                 "pid $pid_path;\n" .
+                 "events {\n" .
+                 "    worker_connections 1024;\n" .
+                 "}\n\n";
+    }
+    else {
+        $conf .= "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n";
+    }
+
+    $conf .= "rtmp {\n";
 
     foreach my $input (@{$data->{'inputs'} || []}) {
         my $incoming_port = int($input->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
@@ -486,8 +512,39 @@ sub restreamconf_nginx_main_conf_path {
 }
 
 sub restreamconf_manage_nginx_include {
-    return 1 if (!defined($config{'manage_nginx_include'}) || $config{'manage_nginx_include'} eq '');
+    return 0 if (restreamconf_isolated_nginx());
+    return 0 if (!defined($config{'manage_nginx_include'}) || $config{'manage_nginx_include'} eq '');
     return ($config{'manage_nginx_include'} !~ /^(0|no|false)$/i);
+}
+
+sub restreamconf_remove_nginx_include {
+    my ($nginx_path) = @_;
+
+    my $main_conf = restreamconf_nginx_main_conf_path();
+    return 0 if (!$main_conf || !-f $main_conf || !-r $main_conf || !-w $main_conf);
+
+    open(my $in, '<', $main_conf) || return 0;
+    my @lines = <$in>;
+    close($in);
+
+    my @updated;
+    my $removed = 0;
+    for (my $i = 0; $i < @lines; $i++) {
+        if ($lines[$i] =~ /^\s*include\s+\Q$nginx_path\E\s*;\s*$/) {
+            if (@updated && $updated[-1] =~ /^# Managed by Webmin\/Virtualmin Restream Configuration\.\s*$/) {
+                pop(@updated);
+            }
+            $removed = 1;
+            next;
+        }
+        push(@updated, $lines[$i]);
+    }
+    return 0 if (!$removed);
+
+    open(my $out, '>', $main_conf) || return 0;
+    print $out @updated;
+    close($out);
+    return 1;
 }
 
 sub restreamconf_ensure_nginx_include {
@@ -531,7 +588,7 @@ sub restreamconf_ensure_nginx_include {
 
 sub restreamconf_write_service_files {
     my ($data) = @_;
-    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
     my $stunnel_path = restreamconf_stunnel_config_path();
     my $legacy_stunnel_path = '/etc/stunnel/restreamconf.conf';
 
@@ -541,7 +598,17 @@ sub restreamconf_write_service_files {
     open(my $nginx, '>', $nginx_path) || &error("Failed to write $nginx_path: $!");
     print $nginx restreamconf_nginx_conf($data);
     close($nginx);
-    restreamconf_ensure_nginx_include($nginx_path);
+    if (restreamconf_isolated_nginx()) {
+        my $legacy_nginx_path = '/etc/nginx/restreamconf/rtmp.conf';
+        restreamconf_remove_nginx_include($nginx_path);
+        if ($nginx_path ne $legacy_nginx_path) {
+            restreamconf_remove_nginx_include($legacy_nginx_path);
+            restreamconf_remove_generated_file($legacy_nginx_path);
+        }
+    }
+    else {
+        restreamconf_ensure_nginx_include($nginx_path);
+    }
 
     my $stunnel_conf = restreamconf_stunnel_conf($data);
     if (defined($stunnel_conf)) {
@@ -681,8 +748,33 @@ sub restreamconf_apply_services {
     my $nginx_service = restreamconf_safe_service_name($config{'nginx_service'} || 'nginx', 'nginx');
     my $stunnel_service = restreamconf_safe_service_name($config{'stunnel_service'} || 'stunnel4', 'stunnel4');
 
-    my ($code, $out) = restreamconf_command_output('systemctl', 'restart', $nginx_service);
-    push(@messages, "$nginx_service: " . ($code ? "restart failed - $out" : "restarted"));
+    my ($code, $out);
+    if (restreamconf_isolated_nginx()) {
+        my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
+        my $pid_path = restreamconf_nginx_pid_path();
+        ($code, $out) = restreamconf_command_output('nginx', '-t', '-c', $nginx_path);
+        if ($code) {
+            push(@messages, "isolated nginx: config test failed - $out");
+        }
+        elsif (-s $pid_path) {
+            ($code, $out) = restreamconf_command_output('nginx', '-s', 'reload', '-c', $nginx_path);
+            if ($code) {
+                ($code, $out) = restreamconf_command_output('nginx', '-c', $nginx_path);
+                push(@messages, "isolated nginx: " . ($code ? "start failed after reload failed - $out" : "started after reload failed"));
+            }
+            else {
+                push(@messages, 'isolated nginx: reloaded');
+            }
+        }
+        else {
+            ($code, $out) = restreamconf_command_output('nginx', '-c', $nginx_path);
+            push(@messages, "isolated nginx: " . ($code ? "start failed - $out" : "started"));
+        }
+    }
+    else {
+        ($code, $out) = restreamconf_command_output('systemctl', 'reload', $nginx_service);
+        push(@messages, "$nginx_service: " . ($code ? "reload failed - $out" : "reloaded"));
+    }
 
     if (restreamconf_enabled_rtmps_streams($data)) {
         restreamconf_command_output('systemctl', 'stop', $stunnel_service);
@@ -724,7 +816,8 @@ sub restreamconf_command_output {
 }
 
 sub restreamconf_nginx_include_status {
-    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
+    return 'isolated standalone nginx config (no main nginx include)' if (restreamconf_isolated_nginx());
     my $main_conf = restreamconf_nginx_main_conf_path();
     return 'main nginx config is not readable' if (!$main_conf || !-r $main_conf);
     open(my $fh, '<', $main_conf) || return "failed to read $main_conf: $!";
@@ -735,18 +828,21 @@ sub restreamconf_nginx_include_status {
 
 sub restreamconf_render_diagnostics {
     my ($data) = @_;
-    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
     $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my @rtmps = restreamconf_enabled_rtmps_streams($data);
     my @ports = restreamconf_enabled_rtmps_local_ports($data);
     my $local_host = restreamconf_safe_local_host();
     my $stunnel_path = restreamconf_stunnel_config_path();
-    my ($nginx_test_code, $nginx_test_out) = restreamconf_command_output('nginx', '-t');
+    my ($nginx_test_code, $nginx_test_out) = restreamconf_isolated_nginx()
+        ? restreamconf_command_output('nginx', '-t', '-c', $nginx_path)
+        : restreamconf_command_output('nginx', '-t');
 
     my $html = '<h3>Diagnostics</h3>';
     $html .= '<p>Use this section to locate where stunnel RTMPS forwarding stops: nginx config loading, incoming listener, local RTMP push target generation, stunnel configuration, or stunnel listener ports.</p>';
     $html .= &ui_columns_start([ 'Check', 'Result' ], 100);
     $html .= &ui_columns_row([ 'RTMPS delivery method', 'stunnel4 local TLS tunnels' ]);
+    $html .= &ui_columns_row([ 'nginx mode', restreamconf_isolated_nginx() ? 'isolated standalone RTMP nginx' : 'shared host nginx include' ]);
     $html .= &ui_columns_row([ 'Generated nginx RTMP config', &html_escape((-r $nginx_path ? "$nginx_path readable" : "$nginx_path missing or unreadable")) ]);
     $html .= &ui_columns_row([ 'Top-level nginx include', &html_escape(restreamconf_nginx_include_status()) ]);
     $html .= &ui_columns_row([ 'nginx -t', &html_escape(($nginx_test_code == 0 ? 'OK' : "FAILED ($nginx_test_code)") . ($nginx_test_out ? ": $nginx_test_out" : '')) ]);
