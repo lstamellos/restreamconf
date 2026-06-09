@@ -2,6 +2,13 @@
 
 require './restreamconf-lib.pl';
 
+&ReadParse();
+if ($in{'metrics'}) {
+    print "Content-type: application/json\n\n";
+    print restreamconf_metrics_json(restreamconf_read_config());
+    exit;
+}
+
 &ui_print_header(undef, $text{'dashboard_title'} || 'Restream Status', '', undef, 1, 1);
 
 my $data = restreamconf_read_config();
@@ -15,6 +22,7 @@ print &ui_columns_end();
 
 print '<h3>Streams</h3>';
 print restreamconf_render_status_table($data);
+print restreamconf_monitor_assets();
 print '<p>Inactive outgoing configurations, including streams in disabled groups, are retained and shown here as inactive so they can be re-enabled later.</p>';
 print restreamconf_render_diagnostics($data);
 

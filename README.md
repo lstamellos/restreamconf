@@ -78,7 +78,9 @@ Then install `/tmp/restreamconf.wbm.gz` via **Webmin Configuration → Webmin Mo
 The module includes `dashboard.cgi` for a standalone monitoring view and `virtual_feature.pl` `theme_sections` integration for Virtualmin's dashboard/theme area. The dashboard diagnostics section checks whether nginx loads the generated RTMP config, whether the incoming port has listener PIDs, what stunnel4 RTMPS forwarding action is generated, and which local tunnel ports are used. The monitoring output lists:
 
 - every incoming RTMP ingest endpoint with its configured hostname, unique port, and application path;
-- each outgoing stream group as enabled or disabled;
-- each active outgoing stream as active;
+- each configured outgoing stream with live status, endpoint, observed bitrate in MB/s, and observed duration since the stream was first seen;
+- total outbound streaming bandwidth consumed, refreshed every second;
 - each individually disabled or group-disabled outgoing stream as inactive;
 - nginx and stunnel4 service states when available through `systemctl`.
+
+The monitoring table polls `dashboard.cgi?metrics=1` every second. Bitrate is calculated from socket byte counters when the host `ss` output exposes them; rows remain visible and show a waiting state when no active socket or byte delta is available yet.
