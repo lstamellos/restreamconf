@@ -25,10 +25,12 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | --- | --- | --- |
 | `streams_file` | `/etc/webmin/restreamconf/streams.conf` | Module stream database |
 | `nginx_conf` | `/etc/nginx/restreamconf/nginx.conf` | Generated standalone RTMP-only nginx config |
-| `nginx_main_conf` | `/etc/nginx/nginx.conf` | Main nginx config used only when isolated mode is explicitly disabled |
-| `manage_nginx_include` | `0` | Legacy shared-nginx mode only: automatically include the generated RTMP config from the main nginx config |
-| `nginx_isolated` | `1` | Run restreaming in its own standalone nginx master so hosted websites and their nginx configs are untouched |
+| `nginx_main_conf` | `/etc/nginx/nginx.conf` | Deprecated compatibility setting; the module no longer writes to the host nginx config |
+| `manage_nginx_include` | `0` | Deprecated compatibility setting; host nginx includes are always disabled |
+| `nginx_isolated` | `1` | Compatibility setting; restreaming always runs in its own standalone nginx master |
 | `nginx_pid` | `/run/restreamconf-nginx.pid` | PID file for the isolated RTMP-only nginx master |
+| `nginx_prefix` | `/var/lib/restreamconf/nginx` | Working prefix directory passed to the isolated nginx master with `nginx -p` |
+| `nginx_error_log` | `/var/log/restreamconf/nginx-error.log` | Error log used by the isolated RTMP-only nginx master |
 | `incoming_host` | system hostname | Default public hostname used for the first incoming RTMP input and legacy configuration |
 | `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
@@ -37,19 +39,11 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 
 ## nginx isolation model
 
-By default, the module writes a complete RTMP-only nginx configuration to `/etc/nginx/restreamconf/nginx.conf` and starts or reloads that configuration as a separate nginx master with its own PID file (`/run/restreamconf-nginx.pid`). It does **not** edit `/etc/nginx/nginx.conf`, does **not** write any Virtualmin website/vhost files, and does **not** restart the host web nginx service. This keeps restreaming isolated from other websites on the same server.
+The module writes a complete RTMP-only nginx configuration to `/etc/nginx/restreamconf/nginx.conf` and starts or reloads that configuration as a separate nginx master with its own PID file (`/run/restreamconf-nginx.pid`) and prefix directory (`/var/lib/restreamconf/nginx`). It does **not** edit `/etc/nginx/nginx.conf`, does **not** write any Virtualmin website/vhost files, and does **not** restart or reload the host web `nginx.service`. This keeps restreaming isolated from other websites on the same server.
 
-The standalone config includes `/etc/nginx/modules-enabled/*.conf` so Debian/Ubuntu dynamic nginx modules such as `libnginx-mod-rtmp` can still be loaded without copying or changing the host web nginx config. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+The isolated process is launched with explicit `nginx -p /var/lib/restreamconf/nginx/ -c /etc/nginx/restreamconf/nginx.conf` arguments so its runtime prefix, PID, and logs stay separate from the host web nginx process. The standalone config includes `/etc/nginx/modules-enabled/*.conf` so Debian/Ubuntu dynamic nginx modules such as `libnginx-mod-rtmp` can still be loaded without copying or changing the host web nginx config. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
 
-A legacy shared-nginx mode remains available by setting `nginx_isolated=0`. In that mode only, `manage_nginx_include=1` can install a top-level include before the `http {}` block because the nginx RTMP module cannot run from inside the HTTP context:
-
-```nginx
-include /etc/nginx/restreamconf/nginx.conf;
-
-http {
-    ...
-}
-```
+Older releases generated `/etc/nginx/restreamconf/rtmp.conf` for use as a top-level include. Current releases leave that path as a harmless no-op module-owned file instead of editing `/etc/nginx/nginx.conf`; this avoids breaking a host nginx configuration that still has the legacy include while ensuring the host web nginx receives no RTMP configuration from this module.
 
 The generated RTMP configuration creates one RTMP server listener for each configured incoming input. Each input has its own public hostname label and unique RTMP port, while all inputs use the configured application name. Every listener binds on IPv4 (`0.0.0.0`) and, by default, IPv6 (`[::]`). Keeping the public hostname label separate from the bind address avoids binding nginx to a DNS name that may resolve to the wrong address family or a non-local address, and the IPv6 listener prevents OBS from getting `ECONNREFUSED` when the hostname resolves to an AAAA record first. Outgoing destinations include an input selector so each restream can choose which incoming port feeds it.
 
