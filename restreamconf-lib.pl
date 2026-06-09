@@ -17,10 +17,25 @@ sub restreamconf_default_group_id {
     return 'default';
 }
 
-sub restreamconf_default_config {
+sub restreamconf_default_input_id {
+    return 'input_default';
+}
+
+sub restreamconf_default_input {
     return {
+        id => restreamconf_default_input_id(),
+        name => 'Default input',
         incoming_host => $config{'incoming_host'} || $DEFAULT_INCOMING_HOST,
         incoming_port => $DEFAULT_INCOMING_PORT,
+    };
+}
+
+sub restreamconf_default_config {
+    my $input = restreamconf_default_input();
+    return {
+        incoming_host => $input->{'incoming_host'},
+        incoming_port => $input->{'incoming_port'},
+        inputs => [ $input ],
         groups => [ { id => restreamconf_default_group_id(), enabled => 1, name => 'Default group' } ],
         streams => [],
     };
@@ -45,6 +60,64 @@ sub restreamconf_unescape {
     $value = '' if (!defined($value));
     $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
     return $value;
+}
+
+sub restreamconf_normalize_inputs {
+    my ($data) = @_;
+    $data->{'inputs'} ||= [];
+
+    my %seen;
+    my %ports;
+    my @inputs;
+    foreach my $input (@{$data->{'inputs'}}) {
+        my $id = $input->{'id'} || restreamconf_default_input_id();
+        $id =~ s/[^A-Za-z0-9_.-]/_/g;
+        next if ($seen{$id});
+        my $port = int($input->{'incoming_port'} || $input->{'port'} || 0);
+        next if (!restreamconf_valid_port($port) || $ports{$port});
+        push(@inputs, {
+            id => $id,
+            name => $input->{'name'} || 'Input ' . (scalar(@inputs) + 1),
+            incoming_host => $input->{'incoming_host'} || $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST,
+            incoming_port => $port,
+        });
+        $seen{$id} = 1;
+        $ports{$port} = 1;
+    }
+
+    if (!@inputs) {
+        my $input = restreamconf_default_input();
+        $input->{'incoming_host'} = $data->{'incoming_host'} || $input->{'incoming_host'};
+        $input->{'incoming_port'} = int($data->{'incoming_port'} || $input->{'incoming_port'});
+        push(@inputs, $input);
+        $seen{$input->{'id'}} = 1;
+    }
+
+    my $fallback_input = $inputs[0]->{'id'};
+    foreach my $stream (@{$data->{'streams'} || []}) {
+        my $input_id = $stream->{'input_id'} || $fallback_input;
+        $stream->{'input_id'} = $seen{$input_id} ? $input_id : $fallback_input;
+    }
+
+    $data->{'inputs'} = \@inputs;
+    $data->{'incoming_host'} = $inputs[0]->{'incoming_host'};
+    $data->{'incoming_port'} = $inputs[0]->{'incoming_port'};
+    return $data;
+}
+
+sub restreamconf_inputs_by_id {
+    my ($data) = @_;
+    my %inputs;
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        $inputs{$input->{'id'}} = $input if ($input->{'id'});
+    }
+    return %inputs;
+}
+
+sub restreamconf_stream_input {
+    my ($data, $stream) = @_;
+    my %inputs = restreamconf_inputs_by_id($data);
+    return $inputs{$stream->{'input_id'}} || ($data->{'inputs'} || [])->[0] || restreamconf_default_input();
 }
 
 sub restreamconf_normalize_groups {
@@ -110,9 +183,10 @@ sub restreamconf_read_config {
     my $path = restreamconf_config_path();
     my $data = restreamconf_default_config();
     $data->{'groups'} = [];
-    return restreamconf_normalize_groups($data) if (!-r $path);
+    $data->{'inputs'} = [];
+    return restreamconf_normalize_groups(restreamconf_normalize_inputs($data)) if (!-r $path);
 
-    open(my $fh, '<', $path) || return restreamconf_normalize_groups($data);
+    open(my $fh, '<', $path) || return restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     while (my $line = <$fh>) {
         chomp($line);
         next if ($line =~ /^\s*#/ || $line =~ /^\s*$/);
@@ -122,6 +196,16 @@ sub restreamconf_read_config {
         }
         elsif ($line =~ /^incoming_port=(\d+)$/) {
             $data->{'incoming_port'} = $1;
+        }
+        elsif ($line =~ /^input=(.*)$/) {
+            my @parts = split(/\|/, $1, -1);
+            next if (@parts < 4);
+            push(@{$data->{'inputs'}}, {
+                id => restreamconf_unescape($parts[0]),
+                name => restreamconf_unescape($parts[1]),
+                incoming_host => restreamconf_unescape($parts[2]),
+                incoming_port => $parts[3],
+            });
         }
         elsif ($line =~ /^group=(.*)$/) {
             my @parts = split(/\|/, $1, -1);
@@ -143,11 +227,12 @@ sub restreamconf_read_config {
                 url => restreamconf_unescape($parts[4]),
                 key => restreamconf_unescape($parts[5]),
                 group_id => restreamconf_unescape($parts[6] || ''),
+                input_id => restreamconf_unescape($parts[7] || ''),
             });
         }
     }
     close($fh);
-    return restreamconf_normalize_groups($data);
+    return restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
 }
 
 sub restreamconf_write_config {
@@ -156,11 +241,20 @@ sub restreamconf_write_config {
     my ($dir) = $path =~ /^(.*)\/[^\/]+$/;
     make_dir($dir, 0700) if ($dir && !-d $dir);
 
+    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
+
     open(my $fh, '>', $path) || &error("Failed to write $path: $!");
     print $fh "# Managed by Webmin/Virtualmin Restream Configuration.\n";
     print $fh "incoming_host=" . restreamconf_escape($data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST) . "\n";
     print $fh "incoming_port=" . int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT) . "\n";
-    $data = restreamconf_normalize_groups($data);
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        print $fh join('|',
+            'input=' . restreamconf_escape($input->{'id'}),
+            restreamconf_escape($input->{'name'}),
+            restreamconf_escape($input->{'incoming_host'}),
+            int($input->{'incoming_port'}),
+        ) . "\n";
+    }
     foreach my $group (@{$data->{'groups'} || []}) {
         print $fh join('|',
             'group=' . restreamconf_escape($group->{'id'}),
@@ -177,6 +271,7 @@ sub restreamconf_write_config {
             restreamconf_escape($stream->{'url'}),
             restreamconf_escape($stream->{'key'}),
             restreamconf_escape($stream->{'group_id'} || restreamconf_default_group_id()),
+            restreamconf_escape($stream->{'input_id'} || restreamconf_default_input_id()),
         ) . "\n";
     }
     close($fh);
@@ -219,9 +314,10 @@ sub restreamconf_safe_local_host {
 }
 
 sub restreamconf_incoming_endpoint {
-    my ($data) = @_;
-    my $host = $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
-    my $port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+    my ($data, $input) = @_;
+    $input ||= ($data->{'inputs'} || [])->[0] || restreamconf_default_input();
+    my $host = $input->{'incoming_host'} || $data->{'incoming_host'} || $config{'incoming_host'} || $DEFAULT_INCOMING_HOST;
+    my $port = int($input->{'incoming_port'} || $data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
     my $app = restreamconf_application();
     return "rtmp://$host:$port/$app";
 }
@@ -259,13 +355,18 @@ sub restreamconf_stream_local_port {
 
 sub restreamconf_enabled_rtmps_streams {
     my ($data) = @_;
+    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my @streams;
-    foreach my $stream (@{$data->{'streams'} || []}) {
-        next if (!restreamconf_stream_active($data, $stream));
-        my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
-        my $parsed = restreamconf_parse_rtmp_url($url);
-        next if (!$parsed || $parsed->{'protocol'} ne 'rtmps');
-        push(@streams, [ $stream, $parsed ]);
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        my $input_id = $input->{'id'} || restreamconf_default_input_id();
+        foreach my $stream (@{$data->{'streams'} || []}) {
+            next if (!restreamconf_stream_active($data, $stream));
+            next if (($stream->{'input_id'} || restreamconf_default_input_id()) ne $input_id);
+            my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
+            my $parsed = restreamconf_parse_rtmp_url($url);
+            next if (!$parsed || $parsed->{'protocol'} ne 'rtmps');
+            push(@streams, [ $stream, $parsed ]);
+        }
     }
     return @streams;
 }
@@ -292,41 +393,50 @@ sub restreamconf_nginx_listen_directives {
 
 sub restreamconf_nginx_conf {
     my ($data) = @_;
+    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my $app = restreamconf_application();
-    my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
-    my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
     my $local_host = restreamconf_safe_local_host();
     my $rtmps_index = 0;
     my $conf = "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
                "# Include this file from nginx.conf at top level; it only defines the rtmp context.\n" .
-               "rtmp {\n" .
-               "    server {\n" .
-               $listen_directives .
-               "        chunk_size 4096;\n\n" .
-               "        application $app {\n" .
-               "            live on;\n" .
-               "            record off;\n";
+               "rtmp {\n";
 
-    foreach my $stream (@{$data->{'streams'} || []}) {
-        next if (!restreamconf_stream_active($data, $stream));
-        my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
-        my $parsed = restreamconf_parse_rtmp_url($url);
-        next if (!$parsed);
-        my $group = restreamconf_stream_group($data, $stream);
-        my $label = ($group->{'name'} ? $group->{'name'} . ' / ' : '') . ($stream->{'name'} || $stream->{'id'} || 'stream');
-        $label =~ s/[\r\n#]/ /g;
-        if ($parsed->{'protocol'} eq 'rtmps') {
-            my $local_port = restreamconf_stream_local_port($rtmps_index++);
-            $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        my $incoming_port = int($input->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+        my $listen_directives = restreamconf_nginx_listen_directives($incoming_port);
+        my $input_id = $input->{'id'} || restreamconf_default_input_id();
+        my $input_label = $input->{'name'} || $input_id;
+        $input_label =~ s/[\r\n#]/ /g;
+        $conf .= "    server { # $input_label\n" .
+                 $listen_directives .
+                 "        chunk_size 4096;\n\n" .
+                 "        application $app {\n" .
+                 "            live on;\n" .
+                 "            record off;\n";
+
+        foreach my $stream (@{$data->{'streams'} || []}) {
+            next if (!restreamconf_stream_active($data, $stream));
+            next if (($stream->{'input_id'} || restreamconf_default_input_id()) ne $input_id);
+            my $url = restreamconf_normalize_stream_url($stream->{'url'}, $stream->{'key'});
+            my $parsed = restreamconf_parse_rtmp_url($url);
+            next if (!$parsed);
+            my $group = restreamconf_stream_group($data, $stream);
+            my $label = ($group->{'name'} ? $group->{'name'} . ' / ' : '') . ($stream->{'name'} || $stream->{'id'} || 'stream');
+            $label =~ s/[\r\n#]/ /g;
+            if ($parsed->{'protocol'} eq 'rtmps') {
+                my $local_port = restreamconf_stream_local_port($rtmps_index++);
+                $conf .= "            push rtmp://$local_host:$local_port$parsed->{'path'}; # $label via stunnel4\n";
+            }
+            else {
+                $conf .= "            push $url; # $label\n";
+            }
         }
-        else {
-            $conf .= "            push $url; # $label\n";
-        }
+
+        $conf .= "        }\n" .
+                 "    }\n";
     }
 
-    $conf .= "        }\n" .
-             "    }\n" .
-             "}\n";
+    $conf .= "}\n";
     return $conf;
 }
 
@@ -625,8 +735,7 @@ sub restreamconf_nginx_include_status {
 sub restreamconf_render_diagnostics {
     my ($data) = @_;
     my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/rtmp.conf';
-    my $incoming_port = int($data->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
-    my @incoming_pids = restreamconf_listening_pids_for_port($incoming_port);
+    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my @rtmps = restreamconf_enabled_rtmps_streams($data);
     my @ports = restreamconf_enabled_rtmps_local_ports($data);
     my $local_host = restreamconf_safe_local_host();
@@ -640,7 +749,12 @@ sub restreamconf_render_diagnostics {
     $html .= &ui_columns_row([ 'Generated nginx RTMP config', &html_escape((-r $nginx_path ? "$nginx_path readable" : "$nginx_path missing or unreadable")) ]);
     $html .= &ui_columns_row([ 'Top-level nginx include', &html_escape(restreamconf_nginx_include_status()) ]);
     $html .= &ui_columns_row([ 'nginx -t', &html_escape(($nginx_test_code == 0 ? 'OK' : "FAILED ($nginx_test_code)") . ($nginx_test_out ? ": $nginx_test_out" : '')) ]);
-    $html .= &ui_columns_row([ 'Incoming RTMP listener PIDs', &html_escape(@incoming_pids ? join(', ', sort { $a <=> $b } @incoming_pids) : "none found on port $incoming_port") ]);
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        my $incoming_port = int($input->{'incoming_port'} || $DEFAULT_INCOMING_PORT);
+        my @incoming_pids = restreamconf_listening_pids_for_port($incoming_port);
+        my $input_name = $input->{'name'} || $input->{'id'} || 'input';
+        $html .= &ui_columns_row([ 'Incoming RTMP listener PIDs: ' . &html_escape($input_name), &html_escape(@incoming_pids ? join(', ', sort { $a <=> $b } @incoming_pids) : "none found on port $incoming_port") ]);
+    }
     $html .= &ui_columns_row([ 'Enabled RTMPS outputs', &html_escape(scalar(@rtmps)) ]);
     $html .= &ui_columns_row([ 'Generated stunnel config', &html_escape((-r $stunnel_path ? "$stunnel_path readable" : "$stunnel_path missing or unreadable")) ]);
     $html .= &ui_columns_row([ 'stunnel local ports', &html_escape(@ports ? join(', ', @ports) : '-') ]);
@@ -672,17 +786,21 @@ sub restreamconf_service_active {
 
 sub restreamconf_render_status_table {
     my ($data) = @_;
-    my $incoming_endpoint = restreamconf_incoming_endpoint($data);
+    $data = restreamconf_normalize_groups(restreamconf_normalize_inputs($data));
     my $html = &ui_columns_start([ 'Type', 'Name', 'Status', 'Endpoint' ], 100);
-    $html .= &ui_columns_row([ 'Incoming', 'RTMP ingest', 'public ingest endpoint', &html_escape($incoming_endpoint) ]);
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        $html .= &ui_columns_row([ 'Incoming', &html_escape($input->{'name'} || $input->{'id'} || 'RTMP ingest'), 'public ingest endpoint', &html_escape(restreamconf_incoming_endpoint($data, $input)) ]);
+    }
     foreach my $group (@{$data->{'groups'} || []}) {
         my $group_state = $group->{'enabled'} ? 'enabled' : 'disabled';
         $html .= &ui_columns_row([ 'Outgoing group', &html_escape($group->{'name'} || $group->{'id'}), $group_state, '-' ]);
         foreach my $stream (@{$data->{'streams'} || []}) {
             next if (($stream->{'group_id'} || restreamconf_default_group_id()) ne $group->{'id'});
             my $state = restreamconf_stream_active($data, $stream) ? 'active' : ($stream->{'enabled'} ? 'inactive (group disabled)' : 'inactive');
+            my $input = restreamconf_stream_input($data, $stream);
             my $endpoint = restreamconf_normalize_stream_url($stream->{'url'} || '', $stream->{'key'} || '');
-            $html .= &ui_columns_row([ 'Outgoing', '&nbsp;&nbsp;' . &html_escape($stream->{'name'} || $stream->{'id'}), $state, &html_escape($endpoint || '-') ]);
+            my $input_name = $input->{'name'} || $input->{'id'} || 'input';
+            $html .= &ui_columns_row([ 'Outgoing', '&nbsp;&nbsp;' . &html_escape($stream->{'name'} || $stream->{'id'}), $state . ' from ' . &html_escape($input_name), &html_escape($endpoint || '-') ]);
         }
     }
     $html .= &ui_columns_end();
