@@ -29,7 +29,7 @@ for (my $i = 0; $i < $input_rows; $i++) {
 
     my $id = $in{"input_id_$i"} || restreamconf_new_id('input', $i);
     $id =~ s/[^A-Za-z0-9_.-]/_/g;
-    next if ($input_ids{$id});
+    &error("Input ID $id is used more than once") if ($input_ids{$id});
     push(@{$data->{'inputs'}}, {
         id => $id,
         name => $name || 'Input ' . ($i + 1),
@@ -88,6 +88,7 @@ if (!@{$data->{'groups'}}) {
 
 my $fallback_group = $data->{'groups'}->[0]->{'id'};
 my $rows = int($in{'rows'} || 0);
+my %stream_ids;
 for (my $i = 0; $i < $rows; $i++) {
     my $name = $in{"name_$i"} || '';
     my $url = $in{"url_$i"} || '';
@@ -125,8 +126,12 @@ for (my $i = 0; $i < $rows; $i++) {
     $input_id =~ s/[^A-Za-z0-9_.-]/_/g;
     $input_id = $fallback_input if (!$input_ids{$input_id});
 
+    my $stream_id = $in{"id_$i"} || restreamconf_new_id('stream', $i);
+    $stream_id =~ s/[^A-Za-z0-9_.-]/_/g;
+    &error("Stream ID $stream_id is used by more than one destination") if ($stream_ids{$stream_id}++);
+
     push(@{$data->{'streams'}}, {
-        id => $in{"id_$i"} || restreamconf_new_id('stream', $i),
+        id => $stream_id,
         enabled => $in{"enabled_$i"} ? 1 : 0,
         name => $name || "Stream " . ($i + 1),
         protocol => $protocol,
@@ -136,6 +141,9 @@ for (my $i = 0; $i < $rows; $i++) {
         input_id => $input_id,
     });
 }
+
+my @validation_errors = restreamconf_validate_configuration($data);
+&error(join('<br>', map { &html_escape($_) } @validation_errors)) if (@validation_errors);
 
 restreamconf_write_config($data);
 print '<p>Configuration saved.</p>';

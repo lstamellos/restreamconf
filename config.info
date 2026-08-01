@@ -6,6 +6,9 @@ nginx_isolated=Compatibility setting; restreaming always runs in its own standal
 nginx_pid=PID file for the isolated restream nginx master,0
 nginx_prefix=Working prefix directory for the isolated restream nginx master,0
 nginx_error_log=Error log for the isolated restream nginx master,0
+nginx_binary=Absolute path to the nginx executable used by the isolated restream service,0
+nginx_systemd_unit=Systemd unit file for the isolated restream nginx service,0
+restream_nginx_service=Systemd service name for the isolated restream nginx master,0
 incoming_host=Default public incoming RTMP hostname shown to OBS,0
 listen_ipv6=Also listen for incoming RTMP over IPv6 (1=yes, 0=no),0
 stunnel_conf=Generated stunnel4 configuration file,0

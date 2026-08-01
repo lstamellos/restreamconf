@@ -347,10 +347,15 @@ sub restreamconf_parse_rtmp_url {
 
 sub restreamconf_stream_local_port {
     my ($index) = @_;
+    my $base_port = restreamconf_local_rtmps_base_port();
+    return $base_port + int($index);
+}
+
+sub restreamconf_local_rtmps_base_port {
     my $base_port = int($config{'local_rtmps_base_port'} || 19350);
     # Migrate older module installs that still have the previous default saved.
     $base_port = 19350 if ($base_port == 31935);
-    return $base_port + int($index);
+    return $base_port;
 }
 
 sub restreamconf_enabled_rtmps_streams {
@@ -415,9 +420,50 @@ sub restreamconf_nginx_error_log {
     return restreamconf_safe_path($config{'nginx_error_log'}, '/var/log/restreamconf/nginx-error.log');
 }
 
+sub restreamconf_nginx_binary {
+    return restreamconf_safe_path($config{'nginx_binary'}, '/usr/sbin/nginx');
+}
+
+sub restreamconf_nginx_systemd_unit_path {
+    return restreamconf_safe_path($config{'nginx_systemd_unit'}, '/etc/systemd/system/restreamconf-nginx.service');
+}
+
+sub restreamconf_nginx_service_name {
+    # Never fall back to the legacy nginx_service setting: older installations
+    # store "nginx" there, which is the host web server this module must not
+    # control or report as its own process.
+    return restreamconf_safe_service_name(
+        $config{'restream_nginx_service'} || 'restreamconf-nginx.service',
+        'restreamconf-nginx.service'
+    );
+}
+
 sub restreamconf_nginx_command_args {
     my ($nginx_path) = @_;
     return ('-p', restreamconf_nginx_prefix() . '/', '-c', $nginx_path);
+}
+
+sub restreamconf_nginx_systemd_unit {
+    my $nginx = restreamconf_nginx_binary();
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
+    my $prefix = restreamconf_nginx_prefix() . '/';
+    my $pid_path = restreamconf_nginx_pid_path();
+    return "# Managed by Webmin/Virtualmin Restream Configuration.\n" .
+           "[Unit]\n" .
+           "Description=Restream Configuration isolated RTMP nginx\n" .
+           "After=network-online.target\n" .
+           "Wants=network-online.target\n\n" .
+           "[Service]\n" .
+           "Type=forking\n" .
+           "PIDFile=$pid_path\n" .
+           "ExecStartPre=$nginx -t -p $prefix -c $nginx_path\n" .
+           "ExecStart=$nginx -p $prefix -c $nginx_path\n" .
+           "ExecReload=$nginx -s reload -p $prefix -c $nginx_path\n" .
+           "ExecStop=$nginx -s quit -p $prefix -c $nginx_path\n" .
+           "Restart=on-failure\n" .
+           "RestartSec=2s\n\n" .
+           "[Install]\n" .
+           "WantedBy=multi-user.target\n";
 }
 
 sub restreamconf_nginx_conf {
@@ -567,6 +613,14 @@ sub restreamconf_write_service_files {
     print $nginx restreamconf_nginx_conf($data);
     close($nginx);
 
+    my $unit_path = restreamconf_nginx_systemd_unit_path();
+    my ($unit_dir) = $unit_path =~ /^(.*)\/[^\/]+$/;
+    make_dir($unit_dir, 0755) if ($unit_dir && !-d $unit_dir);
+    open(my $unit, '>', $unit_path) || &error("Failed to write $unit_path: $!");
+    print $unit restreamconf_nginx_systemd_unit();
+    close($unit);
+    chmod(0644, $unit_path);
+
     # Older releases generated a top-level RTMP include at this path. Leave a
     # harmless no-op file behind instead of editing /etc/nginx/nginx.conf; this
     # avoids breaking a host nginx config that still has the legacy include.
@@ -609,6 +663,31 @@ sub restreamconf_enabled_rtmps_local_ports {
         push(@ports, restreamconf_stream_local_port($rtmps_index++));
     }
     return @ports;
+}
+
+sub restreamconf_managed_stunnel_ports_from_file {
+    my ($path) = @_;
+    return () if (!$path || !-r $path);
+    open(my $fh, '<', $path) || return ();
+    my $first = <$fh> || '';
+    if ($first !~ /^# Managed by Webmin\/Virtualmin Restream Configuration\./) {
+        close($fh);
+        return ();
+    }
+    my %ports;
+    while (my $line = <$fh>) {
+        $ports{$1} = 1 if ($line =~ /^\s*accept\s*=\s*[^:]+:(\d+)\s*$/ && restreamconf_valid_port($1));
+    }
+    close($fh);
+    return sort { $a <=> $b } keys(%ports);
+}
+
+sub restreamconf_managed_stunnel_ports {
+    my %ports;
+    foreach my $path (restreamconf_stunnel_config_path(), '/etc/stunnel/restreamconf.conf') {
+        $ports{$_} = 1 foreach restreamconf_managed_stunnel_ports_from_file($path);
+    }
+    return sort { $a <=> $b } keys(%ports);
 }
 
 sub restreamconf_listening_socket_inodes_for_port {
@@ -686,71 +765,253 @@ sub restreamconf_listening_pids_for_port {
     return keys(%pids);
 }
 
-sub restreamconf_release_stunnel_ports {
-    my ($data) = @_;
-    my %released;
+sub restreamconf_pid_command_line {
+    my ($pid) = @_;
+    return '' if (!defined($pid) || $pid !~ /^\d+$/ || !-r "/proc/$pid/cmdline");
+    open(my $fh, '<', "/proc/$pid/cmdline") || return '';
+    local $/;
+    my $cmdline = <$fh> || '';
+    close($fh);
+    $cmdline =~ s/\0/ /g;
+    return $cmdline;
+}
 
-    foreach my $port (restreamconf_enabled_rtmps_local_ports($data)) {
+sub restreamconf_pid_executable {
+    my ($pid) = @_;
+    return '' if (!defined($pid) || $pid !~ /^\d+$/);
+    return readlink("/proc/$pid/exe") || '';
+}
+
+sub restreamconf_pid_is_isolated_nginx {
+    my ($pid) = @_;
+    my $exe = restreamconf_pid_executable($pid);
+    my $cmdline = restreamconf_pid_command_line($pid);
+    my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
+    return ($exe =~ m!/nginx(?:\.deleted)?$! && index($cmdline, $nginx_path) >= 0) ? 1 : 0;
+}
+
+sub restreamconf_pid_owns_stunnel_config {
+    my ($pid) = @_;
+    return 0 if (!restreamconf_pid_is_stunnel($pid));
+    my $cmdline = restreamconf_pid_command_line($pid);
+    foreach my $path (restreamconf_stunnel_config_path(), '/etc/stunnel/restreamconf.conf') {
+        return 1 if ($path && index($cmdline, $path) >= 0);
+    }
+    return 0;
+}
+
+sub restreamconf_pid_is_stunnel {
+    my ($pid) = @_;
+    my $exe = restreamconf_pid_executable($pid);
+    return $exe =~ m!/stunnel4?(?:\.deleted)?$! ? 1 : 0;
+}
+
+sub restreamconf_validate_configuration {
+    my ($data) = @_;
+    my @errors;
+    my (%input_ids, %input_ports, %stream_ids, %section_ids);
+
+    foreach my $input (@{$data->{'inputs'} || []}) {
+        my $id = $input->{'id'} || '';
+        push(@errors, "Duplicate input ID: $id") if ($id ne '' && $input_ids{$id}++);
+        my $port = $input->{'incoming_port'};
+        if (!restreamconf_valid_port($port)) {
+            push(@errors, "Incoming port is outside the valid range: " . (defined($port) ? $port : 'missing'));
+            next;
+        }
+        push(@errors, "Incoming port $port is assigned more than once") if ($input_ports{$port}++);
+    }
+
+    foreach my $stream (@{$data->{'streams'} || []}) {
+        my $id = $stream->{'id'} || '';
+        if ($id eq '') {
+            push(@errors, 'Every stream must have an ID');
+            next;
+        }
+        push(@errors, "Duplicate stream ID: $id") if ($stream_ids{$id}++);
+        my $section = $id;
+        $section =~ s/[^A-Za-z0-9_-]/_/g;
+        push(@errors, "Stream IDs create the same stunnel section name: $section") if ($section_ids{$section}++);
+    }
+
+    my @rtmps = restreamconf_enabled_rtmps_streams($data);
+    my $base_port = restreamconf_local_rtmps_base_port();
+    if (!restreamconf_valid_port($base_port)) {
+        push(@errors, "Local RTMPS base port $base_port is outside the valid range");
+        return @errors;
+    }
+    if (@rtmps && $base_port + @rtmps - 1 > 65535) {
+        push(@errors, "Local RTMPS port range overflows 65535 ($base_port + " . scalar(@rtmps) . ' streams)');
+        return @errors;
+    }
+
+    my %old_stunnel_ports = map { $_ => 1 } restreamconf_managed_stunnel_ports();
+    my %checked;
+    foreach my $port (keys(%input_ports)) {
+        next if ($checked{"input:$port"}++);
+        my @foreign = grep { !restreamconf_pid_is_isolated_nginx($_) } restreamconf_listening_pids_for_port($port);
+        push(@errors, "Incoming port $port is already used by another process (PID " . join(', ', sort { $a <=> $b } @foreign) . ')') if (@foreign);
+    }
+
+    for (my $i = 0; $i < @rtmps; $i++) {
+        my $port = $base_port + $i;
+        if ($input_ports{$port}) {
+            push(@errors, "Local RTMPS port $port conflicts with an incoming RTMP port");
+            next;
+        }
+        my @foreign = grep {
+            !($old_stunnel_ports{$port} && restreamconf_pid_is_stunnel($_))
+        } restreamconf_listening_pids_for_port($port);
+        push(@errors, "Local RTMPS port $port is already used by another process (PID " . join(', ', sort { $a <=> $b } @foreign) . ')') if (@foreign);
+    }
+    return @errors;
+}
+
+sub restreamconf_release_stunnel_ports {
+    my ($data, @candidate_ports) = @_;
+    my %released;
+    my %blocked;
+    @candidate_ports = restreamconf_enabled_rtmps_local_ports($data) if (!@candidate_ports);
+
+    foreach my $port (@candidate_ports) {
         my @pids = restreamconf_listening_pids_for_port($port);
         next if (!@pids);
 
-        kill('TERM', @pids);
+        my @owned = grep { restreamconf_pid_owns_stunnel_config($_) } @pids;
+        my @foreign = grep { !restreamconf_pid_owns_stunnel_config($_) } @pids;
+        $blocked{$port} = 1 if (@foreign);
+        next if (!@owned);
+
+        restreamconf_signal_pids('TERM', @owned);
         for (my $i = 0; $i < 10 && restreamconf_listening_pids_for_port($port); $i++) {
             select(undef, undef, undef, 0.2);
         }
 
-        @pids = restreamconf_listening_pids_for_port($port);
-        kill('KILL', @pids) if (@pids);
+        @owned = grep { restreamconf_pid_owns_stunnel_config($_) } restreamconf_listening_pids_for_port($port);
+        restreamconf_signal_pids('KILL', @owned) if (@owned);
         for (my $i = 0; $i < 10 && restreamconf_listening_pids_for_port($port); $i++) {
             select(undef, undef, undef, 0.2);
         }
 
         $released{$port} = 1 if (!restreamconf_listening_pids_for_port($port));
+        $blocked{$port} = 1 if (restreamconf_listening_pids_for_port($port));
     }
 
-    return sort { $a <=> $b } keys(%released);
+    return ([ sort { $a <=> $b } keys(%released) ], [ sort { $a <=> $b } keys(%blocked) ]);
+}
+
+sub restreamconf_signal_pids {
+    my ($signal, @pids) = @_;
+    return 0 if (!@pids);
+    return kill($signal, @pids);
+}
+
+sub restreamconf_pid_from_file {
+    my ($path) = @_;
+    return 0 if (!$path || !-r $path);
+    open(my $fh, '<', $path) || return 0;
+    my $pid = <$fh> || '';
+    close($fh);
+    chomp($pid);
+    return $pid =~ /^\d+$/ ? int($pid) : 0;
+}
+
+sub restreamconf_stunnel_has_other_service_configs {
+    my %managed = map { $_ => 1 } (restreamconf_stunnel_config_path(), '/etc/stunnel/restreamconf.conf');
+    my %seen;
+    foreach my $path ('/etc/stunnel/stunnel.conf', glob('/etc/stunnel/*.conf'), glob('/etc/stunnel/conf.d/*.conf')) {
+        next if (!$path || $seen{$path}++ || $managed{$path} || !-r $path);
+        open(my $fh, '<', $path) || next;
+        while (my $line = <$fh>) {
+            if ($line =~ /^\s*\[[^\]]+\]\s*(?:[;#].*)?$/) {
+                close($fh);
+                return 1;
+            }
+        }
+        close($fh);
+    }
+    return 0;
 }
 
 sub restreamconf_apply_services {
     my ($data) = @_;
+    my @validation_errors = restreamconf_validate_configuration($data);
+    return map { "validation failed - $_" } @validation_errors if (@validation_errors);
+
+    my @previous_stunnel_ports = restreamconf_managed_stunnel_ports();
     restreamconf_write_service_files($data);
     my @messages;
     my $stunnel_service = restreamconf_safe_service_name($config{'stunnel_service'} || 'stunnel4', 'stunnel4');
+    my $nginx_service = restreamconf_nginx_service_name();
 
     my ($code, $out);
     my $nginx_path = $config{'nginx_conf'} || '/etc/nginx/restreamconf/nginx.conf';
     my $pid_path = restreamconf_nginx_pid_path();
     my @nginx_args = restreamconf_nginx_command_args($nginx_path);
-    ($code, $out) = restreamconf_command_output('nginx', '-t', @nginx_args);
+    my $nginx = restreamconf_nginx_binary();
+    ($code, $out) = restreamconf_command_output($nginx, '-t', @nginx_args);
     if ($code) {
         push(@messages, "isolated nginx: config test failed - $out");
     }
-    elsif (-s $pid_path) {
-        ($code, $out) = restreamconf_command_output('nginx', '-s', 'reload', @nginx_args);
-        if ($code) {
-            ($code, $out) = restreamconf_command_output('nginx', @nginx_args);
-            push(@messages, "isolated nginx: " . ($code ? "start failed after reload failed - $out" : "started after reload failed"));
+    else {
+        my ($reload_code, $reload_out) = restreamconf_command_output('systemctl', 'daemon-reload');
+        if ($reload_code) {
+            push(@messages, "$nginx_service: systemd daemon-reload failed - $reload_out");
         }
         else {
-            push(@messages, 'isolated nginx: reloaded');
+            my ($enable_code, $enable_out) = restreamconf_command_output('systemctl', 'enable', $nginx_service);
+            push(@messages, "$nginx_service: enable failed - $enable_out") if ($enable_code);
+
+            if (restreamconf_service_active($nginx_service) eq 'active') {
+                ($code, $out) = restreamconf_command_output('systemctl', 'reload', $nginx_service);
+                if ($code) {
+                    ($code, $out) = restreamconf_command_output('systemctl', 'restart', $nginx_service);
+                    push(@messages, "$nginx_service: " . ($code ? "restart failed after reload failed - $out" : 'restarted after reload failed'));
+                }
+                else {
+                    push(@messages, "$nginx_service: reloaded and enabled at boot");
+                }
+            }
+            else {
+                # Migrate the detached process used by releases before 0.1.1.
+                my $legacy_pid = restreamconf_pid_from_file($pid_path);
+                if ($legacy_pid && !restreamconf_pid_is_isolated_nginx($legacy_pid)) {
+                    push(@messages, "$nginx_service: refused to start because $pid_path points to unverified PID $legacy_pid");
+                }
+                else {
+                    if ($legacy_pid) {
+                        restreamconf_command_output($nginx, '-s', 'quit', @nginx_args);
+                        for (my $i = 0; $i < 20 && kill(0, $legacy_pid); $i++) {
+                            select(undef, undef, undef, 0.1);
+                        }
+                    }
+                    ($code, $out) = restreamconf_command_output('systemctl', 'start', $nginx_service);
+                    push(@messages, "$nginx_service: " . ($code ? "start failed - $out" : 'started and enabled at boot'));
+                }
+            }
         }
-    }
-    else {
-        ($code, $out) = restreamconf_command_output('nginx', @nginx_args);
-        push(@messages, "isolated nginx: " . ($code ? "start failed - $out" : "started"));
     }
 
     if (restreamconf_enabled_rtmps_streams($data)) {
         restreamconf_command_output('systemctl', 'stop', $stunnel_service);
-        restreamconf_command_output('systemctl', 'kill', '-s', 'KILL', $stunnel_service);
-        my @released_ports = restreamconf_release_stunnel_ports($data);
+        my ($released_ports, $blocked_ports) = restreamconf_release_stunnel_ports($data, @previous_stunnel_ports);
         ($code, $out) = restreamconf_command_output('systemctl', 'start', $stunnel_service);
         my $result = $code ? "start failed - $out" : "started";
-        $result .= "; released stale listeners on ports " . join(', ', @released_ports) if (@released_ports);
+        $result .= "; released verified module listeners on ports " . join(', ', @{$released_ports}) if (@{$released_ports});
+        $result .= "; refused to kill unverified listeners on ports " . join(', ', @{$blocked_ports}) if (@{$blocked_ports});
         push(@messages, "$stunnel_service: $result");
     }
     else {
-        push(@messages, "$stunnel_service: skipped (no enabled RTMPS destinations)");
+        ($code, $out) = restreamconf_command_output('systemctl', 'stop', $stunnel_service);
+        my ($released_ports, $blocked_ports) = restreamconf_release_stunnel_ports($data, @previous_stunnel_ports);
+        my $result = $code ? "stop failed - $out" : 'stopped after removing the last enabled RTMPS destination';
+        if (restreamconf_stunnel_has_other_service_configs()) {
+            my ($start_code, $start_out) = restreamconf_command_output('systemctl', 'start', $stunnel_service);
+            $result .= $start_code ? "; other stunnel configs failed to restart - $start_out" : '; restarted for other stunnel configs';
+        }
+        $result .= "; released verified module listeners on ports " . join(', ', @{$released_ports}) if (@{$released_ports});
+        $result .= "; refused to kill unverified listeners on ports " . join(', ', @{$blocked_ports}) if (@{$blocked_ports});
+        push(@messages, "$stunnel_service: $result");
     }
     return @messages;
 }

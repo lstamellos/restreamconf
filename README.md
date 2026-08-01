@@ -31,6 +31,9 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 | `nginx_pid` | `/run/restreamconf-nginx.pid` | PID file for the isolated RTMP-only nginx master |
 | `nginx_prefix` | `/var/lib/restreamconf/nginx` | Working prefix directory passed to the isolated nginx master with `nginx -p` |
 | `nginx_error_log` | `/var/log/restreamconf/nginx-error.log` | Error log used by the isolated RTMP-only nginx master |
+| `nginx_binary` | `/usr/sbin/nginx` | Absolute nginx executable used by the isolated service |
+| `nginx_systemd_unit` | `/etc/systemd/system/restreamconf-nginx.service` | Generated module-owned systemd unit |
+| `restream_nginx_service` | `restreamconf-nginx.service` | Module-owned service enabled at boot and shown in monitoring |
 | `incoming_host` | system hostname | Default public hostname used for the first incoming RTMP input and legacy configuration |
 | `listen_ipv6` | `1` | Also generate an IPv6 RTMP listener so hostnames with AAAA records work from OBS |
 | `stunnel_conf` | `/etc/stunnel/conf.d/restreamconf.conf` | Generated stunnel4 client config for RTMPS upstreams |
@@ -41,7 +44,7 @@ Defaults are stored in `config` and can be changed from Webmin module configurat
 
 The module writes a complete RTMP-only nginx configuration to `/etc/nginx/restreamconf/nginx.conf` and starts or reloads that configuration as a separate nginx master with its own PID file (`/run/restreamconf-nginx.pid`) and prefix directory (`/var/lib/restreamconf/nginx`). It does **not** edit `/etc/nginx/nginx.conf`, does **not** write any Virtualmin website/vhost files, and does **not** restart or reload the host web `nginx.service`. This keeps restreaming isolated from other websites on the same server.
 
-The isolated process is launched with explicit `nginx -p /var/lib/restreamconf/nginx/ -c /etc/nginx/restreamconf/nginx.conf` arguments so its runtime prefix, PID, and logs stay separate from the host web nginx process. The standalone config includes `/etc/nginx/modules-enabled/*.conf` so Debian/Ubuntu dynamic nginx modules such as `libnginx-mod-rtmp` can still be loaded without copying or changing the host web nginx config. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
+The isolated process is launched by the generated and boot-enabled `restreamconf-nginx.service`, with explicit `nginx -p /var/lib/restreamconf/nginx/ -c /etc/nginx/restreamconf/nginx.conf` arguments so its runtime prefix, PID, and logs stay separate from the host web nginx process. Applying version 0.1.1 migrates a detached process from an older release into the systemd unit. The standalone config includes `/etc/nginx/modules-enabled/*.conf` so Debian/Ubuntu dynamic nginx modules such as `libnginx-mod-rtmp` can still be loaded without copying or changing the host web nginx config. The host must have nginx built with the RTMP module, for example the `libnginx-mod-rtmp` package on Debian/Ubuntu systems that provide it.
 
 Older releases generated `/etc/nginx/restreamconf/rtmp.conf` for use as a top-level include. Current releases leave that path as a harmless no-op module-owned file instead of editing `/etc/nginx/nginx.conf`; this avoids breaking a host nginx configuration that still has the legacy include while ensuring the host web nginx receives no RTMP configuration from this module.
 
@@ -57,7 +60,13 @@ Each outgoing stream row has an **Input** selector. When service files are gener
 
 nginx RTMP pushes plain RTMP directly. For RTMPS destinations, this module creates one local stunnel4 client listener per enabled RTMPS output. nginx pushes the incoming stream to `rtmp://127.0.0.1:<local-port>/<remote-path>`, preserving the remote RTMPS path and stream key. stunnel4 accepts that local RTMP connection and connects to the remote RTMPS host using TLS with SNI.
 
-When applying enabled RTMPS outputs, the module reloads or starts only the isolated RTMP nginx master, then stops `stunnel4`, releases any stale listeners still bound to the module-owned local tunnel ports, and then starts `stunnel4`; this avoids `Address already in use` failures from orphaned stunnel processes. Inactive RTMPS outputs, including outputs inside disabled groups, are saved but do not receive nginx push directives or stunnel4 service entries until both their group and their individual row are re-enabled. When no enabled RTMPS outputs exist, the module removes its generated stunnel4 file and skips restarting `stunnel4` so Ubuntu/Debian stunnel does not try to start an empty configuration in inetd mode.
+When applying enabled RTMPS outputs, the module reloads or starts only the isolated RTMP nginx master, then stops `stunnel4`, releases stale listeners only when their executable and command line prove that they belong to the module-owned stunnel configuration, and starts `stunnel4` again. It never sends signals to an unverified process merely because that process occupies a configured port. Inactive RTMPS outputs, including outputs inside disabled groups, are saved but do not receive nginx push directives or stunnel4 service entries until both their group and their individual row are re-enabled. When the last enabled RTMPS output is removed, the module stops `stunnel4` after removing its generated configuration and restarts it only when other stunnel service configurations remain, ensuring that obsolete module listeners do not survive.
+
+Before saving, the module rejects duplicate input or stream IDs, duplicate stunnel section names, invalid or overflowing local RTMPS port ranges, overlap between incoming RTMP and local RTMPS ports, and ports already occupied by processes that are not recognized as the currently managed restream nginx/stunnel listeners.
+
+## Version 0.1.1
+
+This bugfix release adds reboot persistence for the isolated nginx master, correct cleanup when the final RTMPS destination is disabled or removed, ownership checks before signalling stale stunnel listeners, and strict ID/port collision validation.
 
 On Ubuntu/Debian, the default stunnel4 package reads snippets from `/etc/stunnel/conf.d` through `/etc/stunnel/stunnel.conf`. The module therefore writes its generated snippet to `/etc/stunnel/conf.d/restreamconf.conf` and removes the older module-owned `/etc/stunnel/restreamconf.conf` file when it can identify the managed header. The generated snippet intentionally does not set `pid =`; the package-managed top-level `stunnel4` service must keep ownership of its daemon pid file so service restarts stop the old listener before binding the same local tunnel ports again.
 
