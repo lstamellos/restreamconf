@@ -33,9 +33,10 @@ sub settings_links
 sub theme_sections
 {
     my $data = restreamconf_read_config();
-    my $nginx = restreamconf_service_active($config{'nginx_service'} || 'nginx');
+    my $nginx_service = restreamconf_nginx_service_name();
+    my $nginx = restreamconf_service_active($nginx_service);
     my $stunnel = restreamconf_service_active($config{'stunnel_service'} || 'stunnel4');
-    my $html = '<div><b>nginx:</b> ' . &html_escape($nginx) .
+    my $html = '<div><b>' . &html_escape($nginx_service) . ':</b> ' . &html_escape($nginx) .
                ' &nbsp; <b>stunnel4:</b> ' . &html_escape($stunnel) . '</div>';
     $html .= restreamconf_render_status_table($data);
     $html .= '<p><a href="/restreamconf/dashboard.cgi">View restream monitor</a></p>';

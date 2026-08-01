@@ -7,7 +7,7 @@ require './restreamconf-lib.pl';
 my $data = restreamconf_read_config();
 print '<h3>Services</h3>';
 print &ui_columns_start([ 'Service', 'Status' ], 100);
-my $nginx_service = restreamconf_safe_service_name($config{'nginx_service'} || 'nginx', 'nginx');
+my $nginx_service = restreamconf_nginx_service_name();
 my $stunnel_service = restreamconf_safe_service_name($config{'stunnel_service'} || 'stunnel4', 'stunnel4');
 print &ui_columns_row([ &html_escape($nginx_service), &html_escape(restreamconf_service_active($nginx_service)) ]);
 print &ui_columns_row([ &html_escape($stunnel_service), &html_escape(restreamconf_service_active($stunnel_service)) ]);
